@@ -1,3 +1,5 @@
+import type { MouseEvent } from "react";
+
 export function scrollToSection(sectionId: string) {
   const id = sectionId.replace(/^#/, "");
   const el = document.getElementById(id);
@@ -10,7 +12,7 @@ export function scrollToSection(sectionId: string) {
 }
 
 export function handleSectionNav(
-  e: React.MouseEvent<HTMLAnchorElement>,
+  e: MouseEvent<HTMLAnchorElement>,
   sectionId: string
 ) {
   e.preventDefault();

@@ -1,6 +1,7 @@
 "use client";
 
-import { handleSectionNav } from "../lib/scrollToSection";
+import Link from "next/link";
+import { handleSectionNav, scrollToSection } from "../lib/scrollToSection";
 import SolDiffIcon from "./SolDiffIcon";
 
 export default function Footer() {
@@ -87,14 +88,12 @@ export default function Footer() {
               position: "relative",
             }}
           >
-            <a href="/" onClick={(e) => handleSectionNav(e, "demo")}>
-              <button className="btn-primary">
-                Open playground
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  <path d="M5 12h14M13 5l7 7-7 7" />
-                </svg>
-              </button>
-            </a>
+            <button type="button" className="btn-primary" onClick={() => scrollToSection("demo")}>
+              Open playground
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <path d="M5 12h14M13 5l7 7-7 7" />
+              </svg>
+            </button>
             <a href="https://github.com/MisbahAnsar/soldiff" target="_blank" rel="noopener noreferrer">
               <button className="btn-secondary">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -180,30 +179,44 @@ export default function Footer() {
                 {col.label}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {col.links.map((l) => (
-                  <a
-                    key={l.label}
-                    href={"sectionId" in l ? "/" : l.href}
-                    onClick={
-                      "sectionId" in l
-                        ? (e) => handleSectionNav(e, l.sectionId)
-                        : undefined
-                    }
-                    target={"href" in l && !l.href.startsWith("/") ? "_blank" : undefined}
-                    rel={"href" in l && !l.href.startsWith("/") ? "noopener noreferrer" : undefined}
-                    style={{
-                      fontSize: 13,
-                      color: "var(--text-secondary)",
-                      textDecoration: "none",
-                      transition: "color 0.15s",
-                      letterSpacing: "-0.005em",
-                    }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-primary)")}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-secondary)")}
-                  >
-                    {l.label}
-                  </a>
-                ))}
+                {col.links.map((l) =>
+                  "sectionId" in l ? (
+                    <Link
+                      key={l.label}
+                      href="/"
+                      onClick={(e) => handleSectionNav(e, l.sectionId)}
+                      style={{
+                        fontSize: 13,
+                        color: "var(--text-secondary)",
+                        textDecoration: "none",
+                        transition: "color 0.15s",
+                        letterSpacing: "-0.005em",
+                      }}
+                      onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-primary)")}
+                      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-secondary)")}
+                    >
+                      {l.label}
+                    </Link>
+                  ) : (
+                    <a
+                      key={l.label}
+                      href={l.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: 13,
+                        color: "var(--text-secondary)",
+                        textDecoration: "none",
+                        transition: "color 0.15s",
+                        letterSpacing: "-0.005em",
+                      }}
+                      onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-primary)")}
+                      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-secondary)")}
+                    >
+                      {l.label}
+                    </a>
+                  )
+                )}
               </div>
             </div>
           ))}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { handleSectionNav } from "../lib/scrollToSection";
 import SolDiffIcon from "./SolDiffIcon";
@@ -51,7 +52,7 @@ export default function Navbar() {
         }}
       >
         {/* Logo */}
-        <a
+        <Link
           href="/"
           onClick={(e) => handleSectionNav(e, "hero")}
           style={{
@@ -71,7 +72,7 @@ export default function Navbar() {
         >
           <SolDiffIcon />
           <span>SolDiff.</span>
-        </a>
+        </Link>
 
         {/* Center pill nav */}
         <nav
@@ -110,7 +111,7 @@ function NavLink({
 }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <a
+    <Link
       href="/"
       onClick={(e) => handleSectionNav(e, sectionId)}
       onMouseEnter={() => setHovered(true)}
@@ -129,7 +130,7 @@ function NavLink({
       }}
     >
       {children}
-    </a>
+    </Link>
   );
 }
 
@@ -142,7 +143,7 @@ function CTAButton({
 }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <a
+    <Link
       href="/"
       onClick={(e) => handleSectionNav(e, sectionId)}
       onMouseEnter={() => setHovered(true)}
@@ -167,6 +168,6 @@ function CTAButton({
       }}
     >
       {children}
-    </a>
+    </Link>
   );
 }

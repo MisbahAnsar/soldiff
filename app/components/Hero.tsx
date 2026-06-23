@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { handleSectionNav } from "../lib/scrollToSection";
 
@@ -17,7 +18,7 @@ function HeroButton({
   const isPrimary = variant === "primary";
 
   return (
-    <a
+    <Link
       href="/"
       onClick={(e) => handleSectionNav(e, sectionId)}
       onMouseEnter={() => setHov(true)}
@@ -51,7 +52,7 @@ function HeroButton({
       }}
     >
       {children}
-    </a>
+    </Link>
   );
 }
 
