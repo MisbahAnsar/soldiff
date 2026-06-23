@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SolDiff Review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #11182b;
+      --muted: #8ea0c6;
+      --text: #eef3ff;
+      --border: rgba(255,255,255,0.08);
+      --red: #ff5d5d;
+      --amber: #ffb020;
+      --green: #23c483;
+      --blue: #78a6ff;
+    }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(circle at top, #17213f 0%, var(--bg) 50%);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 48px; }
+    .hero {
+      display: grid;
+      gap: 18px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: rgba(17,24,43,0.8);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 20px 80px rgba(0,0,0,0.35);
+    }
+    h1, h2, h3 { margin: 0; }
+    .sub { color: var(--muted); max-width: 78ch; }
+    .scores { display: flex; gap: 12px; flex-wrap: wrap; }
+    .score {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      font-weight: 600;
+    }
+    .score strong { margin-left: 6px; }
+    .grid { display: grid; gap: 16px; margin-top: 22px; }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 18px;
+    }
+    .finding { display: grid; gap: 10px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .critical { color: var(--red); background: rgba(255,93,93,0.12); }
+    .high { color: var(--red); background: rgba(255,93,93,0.10); }
+    .medium { color: var(--amber); background: rgba(255,176,32,0.10); }
+    .low { color: var(--blue); background: rgba(120,166,255,0.10); }
+    .meta { color: var(--muted); font-size: 14px; }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: #dbe5ff;
+    }
+    .files a { color: #9bc1ff; text-decoration: none; }
+    .files a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div>
+        <h1>SolDiff Review</h1>
+        <p class="sub">The workspace is a polished Next.js landing/demo app for a Solana upgrade auditor, but it does not yet contain the advertised CLI, SDK, fetch/decompile pipeline, or any on-chain program code. The review therefore focuses on product completeness, correctness, and frontend quality rather than Solana contract security.</p>
+      </div>
+      <div class="scores">
+        <div class="score">Security <strong>A</strong></div>
+        <div class="score">Quality <strong>C</strong></div>
+        <div class="score">Ready for mainnet <strong>false</strong></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card finding">
+        <div class="pill high">High - Correctness</div>
+        <h2>Advertised Solana pipeline is not implemented</h2>
+        <p>The repository claims an open-source CLI, SDK, archival RPC fetcher, decompiler, diff engine, and governance integrations in <code>README.md</code>, but the actual workspace contains only a Next.js UI with static demo components and no backend or CLI package. That makes the current product materially incomplete and easy to misrepresent as production-ready.</p>
+        <p class="meta"><strong>Fix:</strong> either implement the missing core packages and runtime pipeline, or explicitly re-scope the docs/UI to a prototype and label simulated outputs as demo-only.</p>
+        <div class="files">Evidence: <a href="../README.md">README.md</a>, <a href="../package.json">package.json</a>, <a href="../app/components/DemoSection.tsx">app/components/DemoSection.tsx</a></div>
+      </article>
+
+      <article class="card finding">
+        <div class="pill medium">Medium - Correctness</div>
+        <h2>Animation timers are not cleaned up</h2>
+        <p><code>Hero.tsx</code> schedules delayed terminal-line timers, and <code>DemoSection.tsx</code> starts staged loading intervals plus a delayed selection update, but neither effect returns cleanup for those timers. If the component unmounts or a new selection starts, the old timers can still fire and update state.</p>
+        <p class="meta"><strong>Fix:</strong> store timeout and interval IDs in refs, clear them from the effect cleanup, and cancel any pending staged loading work when a new program is selected.</p>
+        <div class="files">Evidence: <a href="../app/components/Hero.tsx">app/components/Hero.tsx</a>, <a href="../app/components/DemoSection.tsx">app/components/DemoSection.tsx</a></div>
+      </article>
+    </section>
+  </div>
+</body>
+</html>
