@@ -14,7 +14,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![Superteam Grant](https://img.shields.io/badge/Superteam-Grant%20Recipient-14F195)](https://earn.superteam.fun)
 
-[Live Demo](https://soldiff.vercel.app) · [Whitepaper](./WHITEPAPER.md) · [Report a Bug](https://github.com/MisbahAnsar/soldiff/issues)
+[Live Demo](https://soldiff.vercel.app) · [Report a Bug](https://github.com/MisbahAnsar/soldiff/issues)
 
 </div>
 
