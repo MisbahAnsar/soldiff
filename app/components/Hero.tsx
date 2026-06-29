@@ -6,24 +6,20 @@ import { handleSectionNav } from "../lib/scrollToSection";
 
 /* ─── HeroButton ─────────────────────────────────────────────────────────── */
 function HeroButton({
+  href,
   sectionId,
   variant,
   children,
 }: {
-  sectionId: string;
+  href?: string;
+  sectionId?: string;
   variant: "primary" | "secondary";
   children: React.ReactNode;
 }) {
   const [hov, setHov] = useState(false);
   const isPrimary = variant === "primary";
 
-  return (
-    <Link
-      href="/"
-      onClick={(e) => handleSectionNav(e, sectionId)}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
+  const style = {
         textDecoration: "none",
         display: "inline-flex",
         alignItems: "center",
@@ -49,7 +45,28 @@ function HeroButton({
           hov && isPrimary
             ? "0 12px 32px rgba(0,0,0,0.38), 0 0 0 1px rgba(255,255,255,0.08)"
             : "none",
-      }}
+  };
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        onMouseEnter={() => setHov(true)}
+        onMouseLeave={() => setHov(false)}
+        style={{ ...style, textDecoration: "none" }}
+      >
+        {children}
+      </Link>
+    );
+  }
+
+  return (
+    <Link
+      href="/"
+      onClick={(e) => sectionId && handleSectionNav(e, sectionId)}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{ ...style, textDecoration: "none" }}
     >
       {children}
     </Link>
@@ -160,8 +177,8 @@ export default function Hero() {
             animation: "fadeInUp 0.6s ease-out 0.24s both",
           }}
         >
-          <HeroButton sectionId="demo" variant="primary">
-            Open Playground
+          <HeroButton href="/analyze" variant="primary">
+            Get started
           </HeroButton>
           <HeroButton sectionId="how-it-works" variant="secondary">
             Learn more
