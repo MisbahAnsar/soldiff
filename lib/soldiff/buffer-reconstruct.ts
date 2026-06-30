@@ -4,7 +4,14 @@ import {
   BUFFER_HEADER_SIZE,
   LOADER_IX_WRITE,
 } from "./constants";
+import {
+  elfContentHash,
+  getCachedElf,
+  makeElfCacheKey,
+  setCachedElf,
+} from "./elf-cache";
 import { instructionDataToBuffer } from "./ix-data";
+import { getRpcStats, rpcGetSignaturesForAddress, rpcGetTransaction } from "./rpc-executor";
 import { transactionAccountKeys, transactionTopInstructions } from "./tx-keys";
 import { parseUpgradeTransaction } from "./upgrade-tx";
 
@@ -13,12 +20,33 @@ type WriteChunk = {
   bytes: Buffer;
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_SIG_PAGES = 15;
+
+export interface ReconstructProgress {
+  fetched: number;
+  total: number;
+}
+
+function logElfSummary(
+  versionLabel: string,
+  cacheKey: string,
+  upgradeSignature: string,
+  writeTxCount: number,
+  elf: Buffer,
+  cached: boolean
+): void {
+  console.info(
+    `[soldiff] ${versionLabel} summary: ` +
+      `cacheKey=${cacheKey} ` +
+      `upgradeSig=${upgradeSignature.slice(0, 16)}… ` +
+      `writeTxs=${writeTxCount} ` +
+      `elfHash=${elfContentHash(elf)} ` +
+      `source=${cached ? "cache" : "reconstructed"}`
+  );
 }
 
 function parseWriteChunks(
-  tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>,
+  tx: NonNullable<Awaited<ReturnType<typeof rpcGetTransaction>>>,
   bufferAddress: string
 ): WriteChunk[] {
   const keys = transactionAccountKeys(tx);
@@ -52,30 +80,8 @@ function parseWriteChunks(
   return chunks;
 }
 
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-
-  async function worker() {
-    while (next < items.length) {
-      const idx = next++;
-      results[idx] = await fn(items[idx], idx);
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, worker)
-  );
-  return results;
-}
-
 /** List successful Write txs for a buffer account strictly before the Upgrade tx slot. */
 export async function collectBufferWriteSignatures(
-  connection: Connection,
   bufferAddress: PublicKey,
   upgradeSlot: number,
   excludeSignature?: string
@@ -83,8 +89,8 @@ export async function collectBufferWriteSignatures(
   const signatures: string[] = [];
   let before: string | undefined;
 
-  for (let page = 0; page < 50; page++) {
-    const batch = await connection.getSignaturesForAddress(bufferAddress, {
+  for (let page = 0; page < MAX_SIG_PAGES; page++) {
+    const batch = await rpcGetSignaturesForAddress(bufferAddress, {
       limit: 1000,
       before,
     });
@@ -98,13 +104,45 @@ export async function collectBufferWriteSignatures(
     }
 
     const oldest = batch[batch.length - 1];
-    if (oldest.slot < upgradeSlot - 5_000_000) break;
+    if (oldest.slot < upgradeSlot - 250_000) break;
 
     before = oldest.signature;
     if (batch.length < 1000) break;
   }
 
   return signatures;
+}
+
+async function fetchWriteChunksSequential(
+  signatures: string[],
+  bufferAddress: string,
+  versionLabel: string,
+  onProgress?: (p: ReconstructProgress) => void
+): Promise<WriteChunk[]> {
+  const allChunks: WriteChunk[] = [];
+  const total = signatures.length;
+
+  console.info(`[soldiff] ${versionLabel}: ${total} write txs to fetch`);
+
+  for (let i = 0; i < signatures.length; i++) {
+    const tx = await rpcGetTransaction(signatures[i]);
+    if (tx) {
+      allChunks.push(...parseWriteChunks(tx, bufferAddress));
+    }
+
+    const completed = i + 1;
+    if (completed === 1 || completed % 10 === 0 || completed === total) {
+      const stats = getRpcStats();
+      console.info(
+        `[soldiff] Fetching write tx ${completed}/${total} ` +
+          `(elapsed ${stats.elapsedSec}s, retries ${stats.retryCount}, active ${stats.activeCount})`
+      );
+    }
+
+    onProgress?.({ fetched: completed, total });
+  }
+
+  return allChunks;
 }
 
 function assembleElf(chunks: WriteChunk[]): Buffer {
@@ -134,37 +172,39 @@ function assembleElf(chunks: WriteChunk[]): Buffer {
   throw new Error("Reconstructed buffer does not contain a valid ELF header");
 }
 
-/** Reconstruct BPF ELF uploaded into a buffer via Write instructions (Alchemy archival getTransaction). */
-export async function reconstructElfFromBuffer(
-  connection: Connection,
+async function reconstructElfFromBufferUncached(
   bufferAddress: PublicKey,
   upgradeSlot: number,
-  excludeSignature?: string
+  upgradeSignature: string,
+  versionLabel: string,
+  onProgress?: (p: ReconstructProgress) => void
 ): Promise<{ elf: Buffer; writeTxCount: number; slot: number }> {
+  const bufferKey = bufferAddress.toBase58();
+  console.info(
+    `[soldiff] ${versionLabel}: collecting Write sigs for buffer ${bufferKey} ` +
+      `(upgrade slot ${upgradeSlot}, sig ${upgradeSignature.slice(0, 16)}…)`
+  );
+
   const sigs = await collectBufferWriteSignatures(
-    connection,
     bufferAddress,
     upgradeSlot,
-    excludeSignature
+    upgradeSignature
   );
 
   if (sigs.length === 0) {
     throw new Error(
-      `No Write transactions found for buffer ${bufferAddress.toBase58()} before slot ${upgradeSlot}`
+      `No Write transactions found for buffer ${bufferKey} before slot ${upgradeSlot}`
     );
   }
 
-  const allChunks: WriteChunk[] = [];
+  console.info(`[soldiff] ${versionLabel}: ${sigs.length} Write txs found`);
 
-  await mapPool(sigs, 2, async (signature) => {
-    const tx = await connection.getTransaction(signature, {
-      maxSupportedTransactionVersion: 0,
-      commitment: "confirmed",
-    });
-    if (!tx) return;
-    allChunks.push(...parseWriteChunks(tx, bufferAddress.toBase58()));
-    await sleep(50);
-  });
+  const allChunks = await fetchWriteChunksSequential(
+    sigs,
+    bufferKey,
+    versionLabel,
+    onProgress
+  );
 
   const elf = assembleElf(allChunks);
 
@@ -175,12 +215,79 @@ export async function reconstructElfFromBuffer(
   };
 }
 
+/** Reconstruct BPF ELF uploaded into a buffer via Write instructions. */
+export async function reconstructElfFromBuffer(
+  _connection: Connection,
+  bufferAddress: PublicKey,
+  upgradeSlot: number,
+  upgradeSignature: string,
+  versionLabel = "ELF",
+  onProgress?: (p: ReconstructProgress) => void
+): Promise<{
+  elf: Buffer;
+  writeTxCount: number;
+  slot: number;
+  cached: boolean;
+  cacheKey: string;
+  elfHash: string;
+}> {
+  const bufferKey = bufferAddress.toBase58();
+  const cacheKey = makeElfCacheKey(bufferKey, upgradeSlot, upgradeSignature);
+  const hit = getCachedElf(cacheKey);
+
+  if (hit) {
+    logElfSummary(versionLabel, cacheKey, upgradeSignature, 0, hit, true);
+    return {
+      elf: hit,
+      writeTxCount: 0,
+      slot: upgradeSlot - 1,
+      cached: true,
+      cacheKey,
+      elfHash: elfContentHash(hit),
+    };
+  }
+
+  const result = await reconstructElfFromBufferUncached(
+    bufferAddress,
+    upgradeSlot,
+    upgradeSignature,
+    versionLabel,
+    onProgress
+  );
+
+  setCachedElf(cacheKey, result.elf);
+  logElfSummary(
+    versionLabel,
+    cacheKey,
+    upgradeSignature,
+    result.writeTxCount,
+    result.elf,
+    false
+  );
+
+  return {
+    ...result,
+    cached: false,
+    cacheKey,
+    elfHash: elfContentHash(result.elf),
+  };
+}
+
 /** Reconstruct the new ELF deployed by an upgrade transaction. */
 export async function reconstructElfFromUpgrade(
   connection: Connection,
   upgradeSignature: string,
-  expectedProgramId: string
-): Promise<{ elf: Buffer; slot: number; writeTxCount: number; bufferAddress: string }> {
+  expectedProgramId: string,
+  versionLabel = "ELF"
+): Promise<{
+  elf: Buffer;
+  slot: number;
+  writeTxCount: number;
+  bufferAddress: string;
+  cached: boolean;
+  cacheKey: string;
+  elfHash: string;
+}> {
   const parsed = await parseUpgradeTransaction(connection, upgradeSignature);
   if (parsed.programId !== expectedProgramId) {
     throw new Error(
@@ -189,17 +296,21 @@ export async function reconstructElfFromUpgrade(
   }
 
   const buffer = new PublicKey(parsed.bufferAddress);
-  const { elf, writeTxCount, slot } = await reconstructElfFromBuffer(
+  const result = await reconstructElfFromBuffer(
     connection,
     buffer,
     parsed.slot,
-    upgradeSignature
+    upgradeSignature,
+    versionLabel
   );
 
   return {
-    elf,
-    slot,
-    writeTxCount,
+    elf: result.elf,
+    slot: result.slot,
+    writeTxCount: result.writeTxCount,
     bufferAddress: parsed.bufferAddress,
+    cached: result.cached,
+    cacheKey: result.cacheKey,
+    elfHash: result.elfHash,
   };
 }

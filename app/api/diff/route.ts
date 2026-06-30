@@ -10,7 +10,9 @@ interface DiffRequestBody {
   fromSlot?: number;
   toSlot?: number;
   upgradeSignature?: string;
+  prevUpgradeSignature?: string;
   upgradeSlot?: number;
+  prevUpgradeSlot?: number;
   label?: string;
 }
 
@@ -35,10 +37,23 @@ export async function POST(request: Request) {
     const upgradeSignature = body.upgradeSignature?.trim();
 
     if (upgradeSignature) {
+      const prevUpgradeSignature = body.prevUpgradeSignature?.trim();
+      if (!prevUpgradeSignature) {
+        return NextResponse.json(
+          {
+            error:
+              "prevUpgradeSignature is required — provide the older BPF Upgrade tx (Version A).",
+          },
+          { status: 400 }
+        );
+      }
+
       const report = await runDiffPipeline({
         programId,
         upgradeSignature,
+        prevUpgradeSignature,
         upgradeSlot: body.upgradeSlot,
+        prevUpgradeSlot: body.prevUpgradeSlot,
         label: body.label,
       });
       return NextResponse.json({ report });

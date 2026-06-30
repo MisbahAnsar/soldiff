@@ -6,6 +6,7 @@ import {
 } from "@/lib/soldiff/rpc";
 import { findUpgradeBoundaries } from "@/lib/soldiff/upgrades";
 import { getArchiveCoverage } from "@/lib/soldiff/archive";
+import { resetRpcSession } from "@/lib/soldiff/rpc-executor";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -23,6 +24,8 @@ export async function GET(request: Request) {
     } catch {
       return NextResponse.json({ error: "Invalid program ID" }, { status: 400 });
     }
+
+    resetRpcSession();
 
     const connection = createConnection();
     const programData = await resolveProgramDataAddress(connection, pubkey);

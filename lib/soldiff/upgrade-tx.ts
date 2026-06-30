@@ -1,12 +1,10 @@
-import {
-  type Connection,
-  type VersionedTransactionResponse,
-} from "@solana/web3.js";
+import { type Connection, type VersionedTransactionResponse } from "@solana/web3.js";
 import {
   BPF_LOADER_UPGRADEABLE_PROGRAM_ID,
   LOADER_IX_UPGRADE,
 } from "./constants";
 import { instructionDataToBuffer } from "./ix-data";
+import { rpcGetTransaction } from "./rpc-executor";
 import { transactionAccountKeys, transactionTopInstructions } from "./tx-keys";
 
 export interface ParsedUpgradeTx {
@@ -65,13 +63,10 @@ function scanInstructions(
 
 /** Parse a BPF Upgradeable Loader `Upgrade` instruction from an on-chain tx. */
 export async function parseUpgradeTransaction(
-  connection: Connection,
+  _connection: Connection,
   upgradeSignature: string
 ): Promise<ParsedUpgradeTx> {
-  const tx = await connection.getTransaction(upgradeSignature, {
-    maxSupportedTransactionVersion: 0,
-    commitment: "confirmed",
-  });
+  const tx = await rpcGetTransaction(upgradeSignature);
 
   if (!tx) {
     throw new Error(`Upgrade transaction not found: ${upgradeSignature}`);

@@ -6,6 +6,12 @@ import {
 } from "./constants";
 import { getRpcUrl, getRewindRpcUrl } from "./config";
 import { archiveUnavailableMessage, getArchiveCoverage } from "./archive";
+import { getRpcPool } from "./rpc-pool";
+import {
+  BPF_ACCOUNT_TAG,
+  programAccountTypeError,
+} from "./rpc-errors";
+import { rpcGetAccountInfo } from "./rpc-executor";
 
 export interface FetchedBytecode {
   /** Slot the caller asked for (slot mode) or resolved rewind slot. */
@@ -43,28 +49,29 @@ function hashBuffer(buf: Buffer): string {
 
 /** Resolve ProgramData PDA from an upgradeable program ID. */
 export async function resolveProgramDataAddress(
-  connection: Connection,
+  _connection: Connection,
   programId: PublicKey
 ): Promise<PublicKey> {
-  const info = await connection.getAccountInfo(programId);
+  const info = await rpcGetAccountInfo(programId);
+
   if (!info?.data) {
     throw new Error(`Program account not found: ${programId.toBase58()}`);
   }
 
   if (!info.owner.equals(BPF_LOADER_UPGRADEABLE_PROGRAM_ID)) {
     throw new Error(
-      `Program ${programId.toBase58()} is not owned by BPF Upgradeable Loader. ` +
-        `Only upgradeable programs are supported.`
+      `Account ${programId.toBase58()} is not owned by BPF Upgradeable Loader (owner: ${info.owner.toBase58()}). ` +
+        `Only upgradeable BPF programs are supported.`
     );
   }
 
   if (info.data.length < 36) {
-    throw new Error("Program account data too short");
+    throw new Error(`Account ${programId.toBase58()} data too short to be a program account`);
   }
 
   const tag = info.data.readUInt32LE(0);
-  if (tag !== 2) {
-    throw new Error(`Unexpected program account type tag: ${tag}`);
+  if (tag !== BPF_ACCOUNT_TAG.PROGRAM) {
+    throw new Error(programAccountTypeError(programId.toBase58(), tag));
   }
 
   return new PublicKey(info.data.subarray(4, 36));
@@ -324,5 +331,5 @@ function readSectionName(
 }
 
 export function createConnection(): Connection {
-  return new Connection(getRpcUrl(), "confirmed");
+  return getRpcPool().connection();
 }

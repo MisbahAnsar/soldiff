@@ -1,5 +1,6 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { createConnection } from "./rpc";
+import { rpcGetSignaturesForAddress } from "./rpc-executor";
 import { parseUpgradeTransaction } from "./upgrade-tx";
 
 export interface UpgradeBoundary {
@@ -16,7 +17,7 @@ export async function findUpgradeBoundaries(
   let before: string | undefined;
 
   for (let page = 0; page < 40; page++) {
-    const batch = await connection.getSignaturesForAddress(programDataAddress, {
+    const batch = await rpcGetSignaturesForAddress(programDataAddress, {
       limit: 1000,
       before,
     });
