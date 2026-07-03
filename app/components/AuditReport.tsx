@@ -1,16 +1,11 @@
 "use client";
 
-import type { DemoProgram } from "@/app/data/demos";
+import { useState } from "react";
+import type { DemoProgram, Severity } from "@/app/data/demos";
 import BlastRadius from "@/app/components/BlastRadius";
-import AuditDiffViewer from "@/app/components/AuditDiffViewer";
+import DiffViewer from "@/app/components/DiffViewer";
+import { AddressField } from "@/app/components/report/ReportChrome";
 import {
-  AddressField,
-  ReportCard,
-  SeverityBadge,
-  StatGrid,
-} from "@/app/components/report/ReportChrome";
-import {
-  executiveBullets,
   formatElapsed,
   formatTimestamp,
   getRiskBanner,
@@ -18,20 +13,61 @@ import {
   parseReconstructionMeta,
   presentFinding,
   sectionStatus,
-  severityLabel,
   type ReportContext,
 } from "@/app/lib/report-presenter";
 
-const NAV = [
-  { id: "summary", label: "Summary" },
-  { id: "risk", label: "Risk" },
-  { id: "findings", label: "Findings" },
-  { id: "sections", label: "Sections" },
-  { id: "bytecode", label: "Bytecode" },
-  { id: "blast", label: "Blast Radius" },
-  { id: "reconstruction", label: "Reconstruction" },
-  { id: "versions", label: "Versions" },
-] as const;
+const SEVERITY_CONFIG: Record<
+  Severity,
+  { color: string; soft: string; border: string; label: string; mark: string }
+> = {
+  CRITICAL: {
+    color: "var(--sev-critical)",
+    soft: "var(--sev-critical-soft)",
+    border: "var(--sev-critical-border)",
+    label: "Critical",
+    mark: "C",
+  },
+  HIGH: {
+    color: "var(--sev-high)",
+    soft: "var(--sev-high-soft)",
+    border: "var(--sev-high-border)",
+    label: "High",
+    mark: "H",
+  },
+  MEDIUM: {
+    color: "var(--sev-medium)",
+    soft: "var(--sev-medium-soft)",
+    border: "var(--sev-medium-border)",
+    label: "Medium",
+    mark: "M",
+  },
+  LOW: {
+    color: "var(--sev-low)",
+    soft: "var(--sev-low-soft)",
+    border: "var(--sev-low-border)",
+    label: "Low",
+    mark: "L",
+  },
+  INFO: {
+    color: "var(--sev-info)",
+    soft: "var(--sev-info-soft)",
+    border: "var(--sev-info-border)",
+    label: "Info",
+    mark: "I",
+  },
+};
+
+type Tab = "findings" | "instruction" | "accounts" | "blast" | "details";
+
+const TAB_LABELS: Record<Tab, string> = {
+  findings: "Findings",
+  instruction: "Bytecode",
+  accounts: "Rodata",
+  blast: "Blast radius",
+  details: "Details",
+};
+
+const PANEL_H = 544;
 
 interface Props {
   report: DemoProgram;
@@ -39,276 +75,321 @@ interface Props {
 }
 
 export default function AuditReport({ report, context }: Props) {
+  const [activeTab, setActiveTab] = useState<Tab>("findings");
+  const [expandedFinding, setExpandedFinding] = useState<string | null>(
+    report.findings[0]?.id ?? null
+  );
+
   const risk = getRiskLevel(report.riskScore);
   const banner = getRiskBanner(report.riskScore, report.findings);
   const recon = parseReconstructionMeta(report.description);
   const textStatus = sectionStatus(report.instructionDiff, "text");
   const rodataStatus = sectionStatus(report.accountDiff, "rodata");
-  const bullets = executiveBullets(report);
-  const totalFindings = report.findings.filter((f) => f.code !== "NO_CHANGE").length;
+  const visibleFindings = report.findings.filter((f) => f.code !== "NO_CHANGE");
+  const displayFindings =
+    visibleFindings.length > 0 ? visibleFindings : report.findings;
   const elapsed =
     context?.analysisStartedAt && context?.analysisCompletedAt
       ? formatElapsed(context.analysisCompletedAt - context.analysisStartedAt)
       : "—";
 
-  const noChangeFinding = report.findings.find((f) => f.code === "NO_CHANGE");
-  const visibleFindings = report.findings.filter((f) => f.code !== "NO_CHANGE");
+  const riskColor =
+    report.riskScore >= 80
+      ? "var(--sev-critical)"
+      : report.riskScore >= 50
+        ? "var(--sev-high)"
+        : report.riskScore >= 25
+          ? "var(--sev-medium)"
+          : "var(--sev-safe)";
+
+  const tabCount = (tab: Tab) => {
+    switch (tab) {
+      case "findings":
+        return displayFindings.length;
+      case "instruction":
+        return report.instructionDiff.filter(
+          (l) => l.type === "added" || l.type === "removed"
+        ).length;
+      case "accounts":
+        return report.accountDiff.filter((l) => l.type === "added" || l.type === "removed").length;
+      case "blast":
+        return report.blastNodes.filter((n) => n.changed).length;
+      case "details":
+        return 1;
+    }
+  };
 
   return (
-    <div className="audit-report-layout">
-      <nav className="audit-sidebar" aria-label="Report sections">
-        <div className="audit-sidebar-title">Report</div>
-        {NAV.map((item) => (
-          <a key={item.id} href={`#${item.id}`} className="audit-sidebar-link">
-            {item.label}
-          </a>
-        ))}
-      </nav>
-
-      <div className="audit-report-main">
-        {recon.cacheHit && (
-          <div className="audit-cache-badge">
-            <span className="audit-cache-dot" aria-hidden />
-            Loaded from cache — analysis used cached ELF reconstruction
-          </div>
-        )}
-
-        <header className="audit-hero" id="summary">
-          <div className="audit-hero-eyebrow">SolDiff Upgrade Report</div>
-          <h2 className="audit-hero-title">{report.name}</h2>
-          <div className="audit-hero-grid">
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Program</div>
-              <AddressField label="Program ID" value={report.programId} />
-            </div>
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Upgrade</div>
-              <div className="audit-hero-value report-mono">
-                {report.fromSlot.toLocaleString("en-US")} → {report.toSlot.toLocaleString("en-US")}
-              </div>
-            </div>
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Overall Risk</div>
-              <div className={`audit-risk-pill tone-${risk.tone}`}>
-                {risk.emoji} {risk.label}
-                <span className="audit-risk-score">{report.riskScore}/100</span>
-              </div>
-            </div>
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Findings</div>
-              <div className="audit-hero-value">{totalFindings}</div>
-            </div>
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Reconstruction</div>
-              <div className="audit-hero-value">
-                {recon.cacheHit ? "Cache hit" : recon.raw ?? "Complete"}
-              </div>
-            </div>
-            <div className="audit-hero-block">
-              <div className="audit-hero-label">Completed</div>
-              <div className="audit-hero-value">
-                {formatTimestamp(context?.analysisCompletedAt)}
-              </div>
-            </div>
-          </div>
-          <ul className="audit-bullet-list">
-            {bullets.map((b) => (
-              <li key={b}>{b}</li>
-            ))}
-          </ul>
-        </header>
-
-        <div className={`audit-risk-banner tone-${banner.tone}`} id="risk">
-          <div className="audit-risk-banner-title">{banner.title}</div>
-          <p className="audit-risk-banner-reason">{banner.reason}</p>
+    <div className="analyze-playground-panel" style={{ height: PANEL_H, minHeight: PANEL_H }}>
+      {recon.cacheHit && (
+        <div className="analyze-playground-cache">
+          <span className="audit-cache-dot" aria-hidden />
+          ELF loaded from cache
         </div>
+      )}
 
-        <ReportCard title="Findings" id="findings">
-          {noChangeFinding ? (
-            <article className="audit-finding-card tone-safe">
-              {(() => {
-                const p = presentFinding(noChangeFinding);
-                return (
-                  <>
-                    <div className="audit-finding-head">
-                      <span className="audit-finding-icon" aria-hidden>
-                        {p.icon}
-                      </span>
-                      <div>
-                        <h4 className="audit-finding-title">{p.title}</h4>
-                      </div>
-                      <SeverityBadge severity={severityLabel(noChangeFinding.severity)} />
-                    </div>
-                    <p className="audit-finding-desc">{noChangeFinding.description}</p>
-                    <div className="audit-finding-rec">
-                      <div className="audit-finding-rec-label">Recommendation</div>
-                      <p>{noChangeFinding.recommendation}</p>
-                    </div>
-                  </>
-                );
-              })()}
-            </article>
-          ) : visibleFindings.length === 0 ? (
-            <p className="audit-muted">No security findings for this upgrade pair.</p>
-          ) : (
-            <div className="audit-findings-grid">
-              {visibleFindings.map((f) => {
-                const p = presentFinding(f);
-                return (
-                  <article key={f.id} className="audit-finding-card">
-                    <div className="audit-finding-head">
-                      <span className="audit-finding-icon" aria-hidden>
-                        {p.icon}
-                      </span>
-                      <div>
-                        <h4 className="audit-finding-title">{p.title}</h4>
-                        {f.instruction && f.instruction !== f.code && (
-                          <div className="audit-finding-sub">{f.instruction}</div>
-                        )}
-                      </div>
-                      <SeverityBadge severity={severityLabel(f.severity)} />
-                    </div>
-                    <p className="audit-finding-desc">{f.description}</p>
-                    {(f.before || f.after) && (
-                      <div className="audit-finding-refs">
-                        {f.after && (
-                          <AddressField label="Program / target" value={f.after} />
-                        )}
-                      </div>
-                    )}
-                    <div className="audit-finding-rec">
-                      <div className="audit-finding-rec-label">Recommendation</div>
-                      <p>{f.recommendation}</p>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </ReportCard>
-
-        <ReportCard title="Section Changes" id="sections">
-          <table className="audit-table">
-            <thead>
-              <tr>
-                <th>Section</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>.text</td>
-                <td>
-                  <span className={textStatus.tone === "changed" ? "status-changed" : "status-ok"}>
-                    {textStatus.label}
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <td>.rodata</td>
-                <td>
-                  <span className={rodataStatus.tone === "changed" ? "status-changed" : "status-ok"}>
-                    {rodataStatus.label}
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <td>Program Size</td>
-                <td>
-                  <span className={textStatus.tone === "changed" ? "status-changed" : "status-ok"}>
-                    {textStatus.tone === "changed" ? "Changed" : "Same"}
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <td>ELF Header</td>
-                <td>
-                  <span className="status-ok">Unchanged</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </ReportCard>
-
-        <ReportCard title="Bytecode Diff" id="bytecode">
-          <AuditDiffViewer lines={report.instructionDiff} sectionName=".text" />
-          <div style={{ height: 16 }} />
-          <AuditDiffViewer lines={report.accountDiff} sectionName=".rodata" />
-        </ReportCard>
-
-        <ReportCard title="Blast Radius" id="blast">
-          <BlastRadius nodes={report.blastNodes} edges={report.blastEdges} audit />
-        </ReportCard>
-
-        <ReportCard title="Reconstruction Statistics" id="reconstruction">
-          <StatGrid
-            items={[
-              {
-                label: "Program Size",
-                value: textStatus.tone === "changed" ? "Changed" : "Stable",
-              },
-              {
-                label: "Writes (Version A)",
-                value: recon.writesA !== null ? String(recon.writesA) : "—",
-              },
-              {
-                label: "Writes (Version B)",
-                value: recon.writesB !== null ? String(recon.writesB) : "—",
-              },
-              { label: "Elapsed", value: elapsed },
-              { label: "RPC Provider", value: "Alchemy Archive" },
-              {
-                label: "Cache",
-                value: recon.cacheHit ? "Hit" : "Miss",
-              },
-            ]}
-          />
-        </ReportCard>
-
-        <ReportCard title="Version Information" id="versions">
-          <div className="audit-version-grid">
-            <div className="audit-version-col">
-              <h4 className="audit-version-heading">Version A — before</h4>
-              {context?.prevUpgradeSignature ? (
-                <>
-                  <AddressField
-                    label="Upgrade signature"
-                    value={context.prevUpgradeSignature}
-                    kind="tx"
-                  />
-                  <div className="audit-version-meta">
-                    <span>Slot</span>
-                    <code className="report-mono">
-                      {(context.prevUpgradeSlot ?? report.fromSlot).toLocaleString("en-US")}
-                    </code>
-                  </div>
-                </>
-              ) : (
-                <p className="audit-muted">Slot {report.fromSlot.toLocaleString("en-US")}</p>
-              )}
-            </div>
-            <div className="audit-version-col">
-              <h4 className="audit-version-heading">Version B — after</h4>
-              {context?.upgradeSignature ? (
-                <>
-                  <AddressField
-                    label="Upgrade signature"
-                    value={context.upgradeSignature}
-                    kind="tx"
-                  />
-                  <div className="audit-version-meta">
-                    <span>Slot</span>
-                    <code className="report-mono">
-                      {(context.upgradeSlot ?? report.toSlot).toLocaleString("en-US")}
-                    </code>
-                  </div>
-                </>
-              ) : (
-                <p className="audit-muted">Slot {report.toSlot.toLocaleString("en-US")}</p>
-              )}
-            </div>
+      <div className="analyze-playground-header">
+        <RiskMeter score={report.riskScore} color={riskColor} />
+        <div className="analyze-playground-header-main">
+          <div className="analyze-playground-header-row">
+            <span className="analyze-playground-program-name">{report.name}</span>
+            <span
+              className="analyze-playground-risk-tag"
+              style={{ borderColor: riskColor, color: riskColor }}
+            >
+              {risk.label}
+            </span>
           </div>
-        </ReportCard>
+          <div className="analyze-playground-header-meta report-mono">
+            <span>
+              {report.programId.slice(0, 14)}…{report.programId.slice(-4)}
+            </span>
+            <span>·</span>
+            <span>
+              {report.fromSlot.toLocaleString("en-US")} → {report.toSlot.toLocaleString("en-US")}
+            </span>
+          </div>
+          <p className={`analyze-playground-banner tone-${banner.tone}`}>{banner.reason}</p>
+        </div>
+        <div className="analyze-playground-severity-counts">
+          {(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as Severity[]).map((sev) => {
+            const count = report.summary[sev.toLowerCase() as keyof typeof report.summary] as number;
+            if (!count) return null;
+            const cfg = SEVERITY_CONFIG[sev];
+            return (
+              <div
+                key={sev}
+                className="analyze-playground-sev-pill"
+                style={{ borderColor: cfg.border }}
+              >
+                <span className="analyze-playground-sev-mark" style={{ color: cfg.color }}>
+                  {cfg.mark}
+                </span>
+                <span style={{ color: cfg.color }}>{count}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="analyze-playground-tabs">
+        {(Object.keys(TAB_LABELS) as Tab[]).map((tab) => {
+          const isActive = tab === activeTab;
+          return (
+            <button
+              key={tab}
+              type="button"
+              className={`analyze-playground-tab${isActive ? " is-active" : ""}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              {TAB_LABELS[tab]}
+              <span className="analyze-playground-tab-count">{tabCount(tab)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="analyze-playground-content">
+        <div className="analyze-playground-content-inner">
+          {activeTab === "findings" && (
+            <FindingsPanel
+              findings={displayFindings}
+              expandedId={expandedFinding}
+              onExpand={setExpandedFinding}
+            />
+          )}
+          {activeTab === "instruction" && (
+            <DiffViewer lines={report.instructionDiff} title=".text section diff" compact />
+          )}
+          {activeTab === "accounts" && (
+            <DiffViewer lines={report.accountDiff} title=".rodata section diff" compact />
+          )}
+          {activeTab === "blast" && (
+            <BlastRadius nodes={report.blastNodes} edges={report.blastEdges} compact />
+          )}
+          {activeTab === "details" && (
+            <DetailsPanel
+              report={report}
+              context={context}
+              textStatus={textStatus.label}
+              rodataStatus={rodataStatus.label}
+              elapsed={elapsed}
+              recon={recon}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="analyze-playground-footer">
+        <div className="analyze-playground-footer-stats">
+          {[
+            ["Findings", displayFindings.length],
+            ["CPI targets", report.summary.newCpiTargets],
+            ["Elapsed", elapsed],
+          ].map(([label, val]) => (
+            <div key={label as string} className="analyze-playground-stat">
+              <span>{label}</span>
+              <strong>{val}</strong>
+            </div>
+          ))}
+        </div>
+        <span className="analyze-playground-footer-time report-mono">
+          {formatTimestamp(context?.analysisCompletedAt)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RiskMeter({ score, color }: { score: number; color: string }) {
+  const circumference = 2 * Math.PI * 22;
+  const strokeDashoffset = circumference - (score / 100) * circumference;
+
+  return (
+    <div className="analyze-playground-risk-meter">
+      <svg width="46" height="46" viewBox="0 0 56 56" style={{ transform: "rotate(-90deg)" }}>
+        <circle cx="28" cy="28" r="22" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+        <circle
+          cx="28"
+          cy="28"
+          r="22"
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div className="analyze-playground-risk-meter-label">
+        <span style={{ color }}>{score}</span>
+        <small>Risk</small>
+      </div>
+    </div>
+  );
+}
+
+function FindingsPanel({
+  findings,
+  expandedId,
+  onExpand,
+}: {
+  findings: DemoProgram["findings"];
+  expandedId: string | null;
+  onExpand: (id: string | null) => void;
+}) {
+  if (findings.length === 0) {
+    return <p className="analyze-playground-muted">No security findings for this upgrade pair.</p>;
+  }
+
+  return (
+    <div className="analyze-playground-findings">
+      {findings.map((f) => {
+        const cfg = SEVERITY_CONFIG[f.severity];
+        const p = presentFinding(f);
+        const isExpanded = expandedId === f.id;
+        return (
+          <div
+            key={f.id}
+            className={`analyze-playground-finding${isExpanded ? " is-expanded" : ""}`}
+            style={{ borderLeftColor: cfg.color }}
+          >
+            <button
+              type="button"
+              className="analyze-playground-finding-toggle"
+              onClick={() => onExpand(isExpanded ? null : f.id)}
+            >
+              <span className="analyze-playground-finding-mark" style={{ color: cfg.color }}>
+                {p.icon}
+              </span>
+              <span className="analyze-playground-finding-code report-mono">{f.code}</span>
+              <span className="analyze-playground-finding-title">{p.title}</span>
+              <span className="analyze-playground-finding-chevron" aria-hidden>
+                ▾
+              </span>
+            </button>
+            {isExpanded && (
+              <div className="analyze-playground-finding-body">
+                <p>{f.description}</p>
+                <div className="analyze-playground-finding-rec">{f.recommendation}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetailsPanel({
+  report,
+  context,
+  textStatus,
+  rodataStatus,
+  elapsed,
+  recon,
+}: {
+  report: DemoProgram;
+  context?: ReportContext;
+  textStatus: string;
+  rodataStatus: string;
+  elapsed: string;
+  recon: ReturnType<typeof parseReconstructionMeta>;
+}) {
+  return (
+    <div className="analyze-playground-details">
+      <table className="audit-table">
+        <thead>
+          <tr>
+            <th>Section</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>.text</td>
+            <td>{textStatus}</td>
+          </tr>
+          <tr>
+            <td>.rodata</td>
+            <td>{rodataStatus}</td>
+          </tr>
+          <tr>
+            <td>Writes (A / B)</td>
+            <td>
+              {recon.writesA ?? "—"} / {recon.writesB ?? "—"}
+            </td>
+          </tr>
+          <tr>
+            <td>Elapsed</td>
+            <td>{elapsed}</td>
+          </tr>
+          <tr>
+            <td>Cache</td>
+            <td>{recon.cacheHit ? "Hit" : "Miss"}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="analyze-playground-version-grid">
+        <div>
+          <h4>Version A</h4>
+          {context?.prevUpgradeSignature ? (
+            <AddressField label="Upgrade tx" value={context.prevUpgradeSignature} kind="tx" />
+          ) : (
+            <p className="analyze-playground-muted">
+              Slot {report.fromSlot.toLocaleString("en-US")}
+            </p>
+          )}
+        </div>
+        <div>
+          <h4>Version B</h4>
+          {context?.upgradeSignature ? (
+            <AddressField label="Upgrade tx" value={context.upgradeSignature} kind="tx" />
+          ) : (
+            <p className="analyze-playground-muted">Slot {report.toSlot.toLocaleString("en-US")}</p>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,12 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Navbar from "@/app/components/Navbar";
 import ReportPanel from "@/app/components/ReportPanel";
-import RecentUpgradesModal, {
-  type RecentUpgradeProgram,
-} from "@/app/components/recent-upgrades-modal";
 import type { DemoProgram } from "@/app/data/demos";
 import {
   LOADING_STAGES_UI,
@@ -15,13 +12,15 @@ import {
 
 const LOADING_STAGES = [...LOADING_STAGES_UI];
 
-interface UpgradeEntry {
-  slot: number;
-  signature: string;
-  suggestedFromSlot: number;
-  suggestedToSlot: number;
-  diffable: boolean;
-}
+const PROVEN_EXAMPLE = {
+  label: "Solayer endoAVS Program",
+  programId: "endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
+  solscanUrl: "https://solscan.io/account/endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
+  prevUpgradeSignature:
+    "5BzTSCsM5PLEx2zcucUHS14Xo2yQa112UN8D6C4s38j25nHA4FWnLSQsGQyVnJFy8qFXas7UF9qGxN13DSkg7tFq",
+  upgradeSignature:
+    "2b6hpipHgNsF24b5Sb2wUHNtbMhdVPNMhvL73ANxdPmQb14MJjQWJpym9gawYDtfSup2LfJ45iEX86c1WgsfXU3s",
+} as const;
 
 export default function AnalyzePage() {
   const [programId, setProgramId] = useState("");
@@ -30,95 +29,43 @@ export default function AnalyzePage() {
   const [upgradeSignature, setUpgradeSignature] = useState("");
   const [prevUpgradeSlot, setPrevUpgradeSlot] = useState<number | null>(null);
   const [upgradeSlot, setUpgradeSlot] = useState<number | null>(null);
-  const [upgrades, setUpgrades] = useState<UpgradeEntry[]>([]);
-  const [detecting, setDetecting] = useState(false);
-  const [showUpgradeHelper, setShowUpgradeHelper] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(LOADING_STAGES[0]);
-  const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [report, setReport] = useState<DemoProgram | null>(null);
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [reportContext, setReportContext] = useState<ReportContext | undefined>();
-  const [showRecentModal, setShowRecentModal] = useState(false);
-  const [recentLoading, setRecentLoading] = useState(false);
-  const [recentError, setRecentError] = useState<string | null>(null);
-  const [recentPrograms, setRecentPrograms] = useState<RecentUpgradeProgram[]>([]);
-  const [recentGeneratedAt, setRecentGeneratedAt] = useState<number | undefined>();
-  const [recentCurrentSlot, setRecentCurrentSlot] = useState<number | undefined>();
+  const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   const canDiff =
     Boolean(programId.trim()) &&
     Boolean(prevUpgradeSignature.trim()) &&
     Boolean(upgradeSignature.trim());
 
-  const detectUpgrades = async () => {
-    const id = programId.trim();
-    if (!id) {
-      setError("Enter a program ID first.");
-      return;
-    }
-    setDetecting(true);
+  const isProvenExampleActive =
+    programId.trim() === PROVEN_EXAMPLE.programId &&
+    label.trim() === PROVEN_EXAMPLE.label &&
+    prevUpgradeSignature.trim() === PROVEN_EXAMPLE.prevUpgradeSignature &&
+    upgradeSignature.trim() === PROVEN_EXAMPLE.upgradeSignature;
+
+  useEffect(() => {
+    if (!loading || analysisStartedAt === null) return;
+    const tick = () => setElapsedMs(Date.now() - analysisStartedAt);
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [loading, analysisStartedAt]);
+
+  const fillProvenExample = () => {
+    setProgramId(PROVEN_EXAMPLE.programId);
+    setLabel(PROVEN_EXAMPLE.label);
+    setPrevUpgradeSignature(PROVEN_EXAMPLE.prevUpgradeSignature);
+    setUpgradeSignature(PROVEN_EXAMPLE.upgradeSignature);
+    setPrevUpgradeSlot(null);
+    setUpgradeSlot(null);
     setError(null);
-    setUpgrades([]);
-    setShowUpgradeHelper(true);
-
-    try {
-      const res = await fetch(`/api/upgrades?programId=${encodeURIComponent(id)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to detect upgrades");
-      setUpgrades(data.upgrades ?? []);
-      if ((data.upgrades ?? []).length === 0) {
-        setError("No upgrade transactions found for this program.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setDetecting(false);
-    }
-  };
-
-  const selectUpgradePair = (u: UpgradeEntry, index: number) => {
-    const prev = upgrades[index + 1];
-    if (!prev) {
-      setError("This is the earliest indexed upgrade — pick a newer one with a prior version.");
-      return;
-    }
-    setPrevUpgradeSignature(prev.signature);
-    setPrevUpgradeSlot(prev.slot);
-    setUpgradeSignature(u.signature);
-    setUpgradeSlot(u.slot);
-    setError(null);
-  };
-
-  const findRecentUpgrades = async () => {
-    setShowRecentModal(true);
-    setRecentLoading(true);
-    setRecentError(null);
-    try {
-      const res = await fetch("/api/recent-upgrades");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to scan recent upgrades");
-      setRecentPrograms(data.programs ?? []);
-      setRecentGeneratedAt(data.generatedAt);
-      setRecentCurrentSlot(data.currentSlot);
-    } catch (err) {
-      setRecentError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setRecentLoading(false);
-    }
-  };
-
-  const useRecentProgram = (p: RecentUpgradeProgram) => {
-    setProgramId(p.programId);
-    setLabel(p.label ?? "");
-    setPrevUpgradeSignature(p.previousUpgradeSignature);
-    setPrevUpgradeSlot(p.previousUpgradeSlot);
-    setUpgradeSignature(p.latestUpgradeSignature);
-    setUpgradeSlot(p.latestUpgradeSlot);
-    setError(null);
-    setShowRecentModal(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -144,11 +91,12 @@ export default function AnalyzePage() {
       return;
     }
 
+    const startedAt = Date.now();
+    setAnalysisStartedAt(startedAt);
+    setElapsedMs(0);
     setLoading(true);
-    setLoadingProgress(0);
     setLoadingStageIndex(0);
     setLoadingStage(LOADING_STAGES[0]);
-    const startedAt = Date.now();
 
     let stageIdx = 0;
     const stageTimer = setInterval(() => {
@@ -156,10 +104,6 @@ export default function AnalyzePage() {
       setLoadingStageIndex(stageIdx);
       setLoadingStage(LOADING_STAGES[stageIdx]);
     }, 12000);
-
-    const progressTimer = setInterval(() => {
-      setLoadingProgress((p) => Math.min(p + 1, 97));
-    }, 2500);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
@@ -182,7 +126,6 @@ export default function AnalyzePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Analysis failed");
 
-      setLoadingProgress(100);
       setLoadingStageIndex(LOADING_STAGES.length - 1);
       setLoadingStage(LOADING_STAGES[LOADING_STAGES.length - 1]);
       setReportContext({
@@ -207,8 +150,8 @@ export default function AnalyzePage() {
     } finally {
       clearTimeout(timeout);
       clearInterval(stageTimer);
-      clearInterval(progressTimer);
       setLoading(false);
+      setAnalysisStartedAt(null);
     }
   };
 
@@ -233,7 +176,15 @@ export default function AnalyzePage() {
             >
               Diff two on-chain versions
             </h1>
-            <p style={{ fontFamily: "var(--font-inter), Inter, sans-serif", color: "var(--text-secondary)", fontSize: 15, maxWidth: 640, lineHeight: 1.6 }}>
+            <p
+              style={{
+                fontFamily: "var(--font-inter), Inter, sans-serif",
+                color: "var(--text-secondary)",
+                fontSize: 15,
+                maxWidth: 640,
+                lineHeight: 1.6,
+              }}
+            >
               Enter one program ID and two BPF upgrade transaction signatures — the older version
               (before) and the newer version (after). SolDiff reconstructs bytecode from on-chain
               Write transactions and produces a security diff report.
@@ -264,31 +215,94 @@ export default function AnalyzePage() {
                 gap: 20,
               }}
             >
-              <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-                <legend style={{ ...labelStyle, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 4 }}>
-                  Program
+              <div className="analyze-tip-callout">
+                <span className="analyze-tip-label">Tip</span>
+                <p>
+                  For the best experience, use upgradeable programs under 450,000 bytes. Larger
+                  programs require many historical Write transactions and may take much longer to
+                  process.
+                </p>
+              </div>
+
+              <fieldset
+                style={{
+                  border: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <legend
+                  style={{
+                    ...labelStyle,
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    color: "var(--text-muted)",
+                    marginBottom: 4,
+                  }}
+                >
+                  Proven example
                 </legend>
                 <button
                   type="button"
-                  className="btn-secondary"
-                  onClick={findRecentUpgrades}
-                  style={{ justifyContent: "center" }}
+                  className={`analyze-example-btn${isProvenExampleActive ? " is-active" : ""}`}
+                  onClick={fillProvenExample}
                 >
-                  Find Recent Upgrade
+                  <span className="analyze-example-badge">Proven working example</span>
+                  <span className="analyze-example-title">
+                    Solayer endoAVS — proven historical upgrade diff
+                  </span>
+                  <span className="analyze-example-meta">
+                    {PROVEN_EXAMPLE.programId.slice(0, 8)}…{PROVEN_EXAMPLE.programId.slice(-4)}
+                  </span>
                 </button>
+                <a
+                  href={PROVEN_EXAMPLE.solscanUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="analyze-example-link"
+                >
+                  View on Solscan ↗
+                </a>
+              </fieldset>
+
+              <fieldset
+                style={{
+                  border: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <legend
+                  style={{
+                    ...labelStyle,
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    color: "var(--text-muted)",
+                    marginBottom: 4,
+                  }}
+                >
+                  Program
+                </legend>
                 <div>
                   <label style={labelStyle}>Program ID *</label>
                   <input
                     required
                     value={programId}
                     onChange={(e) => setProgramId(e.target.value)}
-                    placeholder="Stk5NCWomVN3itaFjLu382u9ibb5jMSHEsh6CuhaGjB"
+                    placeholder={PROVEN_EXAMPLE.programId}
                     style={inputStyle}
                     spellCheck={false}
                   />
                   <p style={hintStyle}>
-                    Executable program address from Solscan — not ProgramData
-                    (e.g. Stk5NC… not CGAkmh…).
+                    Executable program address from Solscan — not ProgramData.
                   </p>
                 </div>
                 <div>
@@ -296,14 +310,32 @@ export default function AnalyzePage() {
                   <input
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    placeholder="Jupiter Aggregator"
+                    placeholder={PROVEN_EXAMPLE.label}
                     style={inputStyle}
                   />
                 </div>
               </fieldset>
 
-              <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-                <legend style={{ ...labelStyle, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 4 }}>
+              <fieldset
+                style={{
+                  border: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <legend
+                  style={{
+                    ...labelStyle,
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    color: "var(--text-muted)",
+                    marginBottom: 4,
+                  }}
+                >
                   Version A — before upgrade
                 </legend>
                 <div>
@@ -323,8 +355,26 @@ export default function AnalyzePage() {
                 </div>
               </fieldset>
 
-              <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-                <legend style={{ ...labelStyle, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 4 }}>
+              <fieldset
+                style={{
+                  border: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <legend
+                  style={{
+                    ...labelStyle,
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    color: "var(--text-muted)",
+                    marginBottom: 4,
+                  }}
+                >
                   Version B — after upgrade
                 </legend>
                 <div>
@@ -344,86 +394,6 @@ export default function AnalyzePage() {
                 </div>
               </fieldset>
 
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  background: "rgba(107, 207, 143, 0.06)",
-                  border: "1px solid rgba(107, 207, 143, 0.18)",
-                  color: "var(--text-secondary)",
-                  fontSize: 12,
-                  lineHeight: 1.55,
-                }}
-              >
-                Reconstruction time depends on program size. Large programs (e.g. Jupiter) can take
-                1–2 minutes per version on Alchemy free tier. Smaller upgradeable programs finish
-                in seconds.
-              </div>
-
-              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={detecting || !programId.trim()}
-                  onClick={detectUpgrades}
-                  style={{ justifyContent: "center", width: "100%" }}
-                >
-                  {detecting ? "Scanning chain…" : "Help me find upgrade signatures"}
-                </button>
-                <p style={{ ...hintStyle, marginTop: 8 }}>
-                  Optional — scans ProgramData history and fills both fields when you pick a pair.
-                </p>
-              </div>
-
-              {showUpgradeHelper && upgrades.length > 0 && (
-                <div>
-                  <label style={labelStyle}>Pick consecutive upgrades</label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto" }}>
-                    {upgrades.map((u, index) => {
-                      const hasPrior = u.diffable;
-                      const selected =
-                        upgradeSignature === u.signature &&
-                        prevUpgradeSignature === upgrades[index + 1]?.signature;
-                      return (
-                        <button
-                          key={u.signature}
-                          type="button"
-                          disabled={!hasPrior}
-                          onClick={() => selectUpgradePair(u, index)}
-                          style={{
-                            textAlign: "left",
-                            padding: "8px 10px",
-                            borderRadius: 8,
-                            border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
-                            background: selected
-                              ? "rgba(212, 165, 116, 0.08)"
-                              : "rgba(255,255,255,0.02)",
-                            color: "var(--text-secondary)",
-                            fontSize: 11,
-                            cursor: hasPrior ? "pointer" : "not-allowed",
-                            fontFamily: "var(--font-mono), monospace",
-                            opacity: hasPrior ? 1 : 0.45,
-                          }}
-                        >
-                          <span style={{ fontSize: 10, color: hasPrior ? "#6bcf8f" : "var(--text-muted)" }}>
-                            {hasPrior ? "PAIR" : "NO PRIOR"}
-                          </span>
-                          {" · "}slot {u.slot.toLocaleString("en-US")}
-                          <br />
-                          <span style={{ opacity: 0.7 }}>B: {u.signature.slice(0, 16)}…</span>
-                          {hasPrior && (
-                            <>
-                              <br />
-                              <span style={{ opacity: 0.5 }}>A: {upgrades[index + 1].signature.slice(0, 16)}…</span>
-                            </>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               {error && (
                 <div
                   style={{
@@ -440,6 +410,12 @@ export default function AnalyzePage() {
                 </div>
               )}
 
+              <p className="analyze-runtime-note">
+                Large programs can take 4–6 minutes to reconstruct and compare. For faster, more
+                reliable results, use programs under 450,000 bytes. Programs larger than 450,000
+                bytes may take significantly longer or exceed available memory/time limits.
+              </p>
+
               <button
                 type="submit"
                 className="btn-primary"
@@ -454,24 +430,14 @@ export default function AnalyzePage() {
               report={report}
               loading={loading}
               loadingStage={loadingStage}
-              loadingProgress={loadingProgress}
               loadingStageIndex={loadingStageIndex}
+              elapsedMs={elapsedMs}
               error={analysisError}
               context={reportContext}
             />
           </div>
         </div>
       </main>
-      <RecentUpgradesModal
-        open={showRecentModal}
-        loading={recentLoading}
-        error={recentError}
-        programs={recentPrograms}
-        generatedAt={recentGeneratedAt}
-        currentSlot={recentCurrentSlot}
-        onClose={() => setShowRecentModal(false)}
-        onUseProgram={useRecentProgram}
-      />
     </>
   );
 }
