@@ -51,6 +51,7 @@ export default function AuditReport({ report, context }: Props) {
       ? formatElapsed(context.analysisCompletedAt - context.analysisStartedAt)
       : "—";
 
+  const noChangeFinding = report.findings.find((f) => f.code === "NO_CHANGE");
   const visibleFindings = report.findings.filter((f) => f.code !== "NO_CHANGE");
 
   return (
@@ -123,7 +124,31 @@ export default function AuditReport({ report, context }: Props) {
         </div>
 
         <ReportCard title="Findings" id="findings">
-          {visibleFindings.length === 0 ? (
+          {noChangeFinding ? (
+            <article className="audit-finding-card tone-safe">
+              {(() => {
+                const p = presentFinding(noChangeFinding);
+                return (
+                  <>
+                    <div className="audit-finding-head">
+                      <span className="audit-finding-icon" aria-hidden>
+                        {p.icon}
+                      </span>
+                      <div>
+                        <h4 className="audit-finding-title">{p.title}</h4>
+                      </div>
+                      <SeverityBadge severity={severityLabel(noChangeFinding.severity)} />
+                    </div>
+                    <p className="audit-finding-desc">{noChangeFinding.description}</p>
+                    <div className="audit-finding-rec">
+                      <div className="audit-finding-rec-label">Recommendation</div>
+                      <p>{noChangeFinding.recommendation}</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </article>
+          ) : visibleFindings.length === 0 ? (
             <p className="audit-muted">No security findings for this upgrade pair.</p>
           ) : (
             <div className="audit-findings-grid">

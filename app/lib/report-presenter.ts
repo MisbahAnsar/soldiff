@@ -57,6 +57,17 @@ export function getRiskBanner(score: number, findings: Finding[]): {
   title: string;
   reason: string;
 } {
+  const noChangeOnly =
+    findings.length > 0 && findings.every((f) => f.code === "NO_CHANGE");
+  if (noChangeOnly) {
+    return {
+      tone: "safe",
+      title: "No significant changes",
+      reason:
+        "Reconstructed bytecode is identical between Version A and Version B. No upgrade diff is required.",
+    };
+  }
+
   const critical = findings.filter((f) => f.severity === "CRITICAL").length;
   const high = findings.filter((f) => f.severity === "HIGH").length;
 

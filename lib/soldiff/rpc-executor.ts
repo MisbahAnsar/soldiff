@@ -2,6 +2,7 @@ import pLimit from "p-limit";
 import {
   type AccountInfo,
   type ConfirmedSignatureInfo,
+  type GetProgramAccountsFilter,
   type PublicKey,
   type VersionedTransactionResponse,
 } from "@solana/web3.js";
@@ -144,5 +145,25 @@ export async function rpcGetAccountInfo(
 ): Promise<AccountInfo<Buffer> | null> {
   return executeRpc(`getAccountInfo ${pubkey.toBase58().slice(0, 8)}…`, () =>
     getRpcPool().connection().getAccountInfo(pubkey)
+  );
+}
+
+export async function rpcGetSlot(): Promise<number> {
+  return executeRpc("getSlot", () => getRpcPool().connection().getSlot("confirmed"));
+}
+
+export async function rpcGetProgramAccounts(
+  programId: PublicKey,
+  config?: {
+    filters?: GetProgramAccountsFilter[];
+    dataSlice?: { offset: number; length: number };
+  }
+) {
+  return executeRpc(`getProgramAccounts ${programId.toBase58().slice(0, 8)}…`, () =>
+    getRpcPool().connection().getProgramAccounts(programId, {
+      commitment: "confirmed",
+      filters: config?.filters,
+      dataSlice: config?.dataSlice,
+    })
   );
 }

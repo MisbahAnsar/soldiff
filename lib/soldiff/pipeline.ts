@@ -1,4 +1,4 @@
-import type { DemoProgram } from "@/app/data/demos";
+import type { DemoProgram, DiffLine } from "@/app/data/demos";
 import { PublicKey } from "@solana/web3.js";
 import {
   fetchBytecodeAtSlot,
@@ -8,7 +8,7 @@ import {
   type FetchedBytecode,
 } from "./rpc";
 import { reconstructElfFromBuffer } from "./buffer-reconstruct";
-import { diffBytecode } from "./diff";
+import { countChangedChunks, diffBytecode } from "./diff";
 import {
   buildRuleContext,
   computeRiskScore,
@@ -127,13 +127,7 @@ async function runUpgradeDiffPipeline(req: UpgradeDiffRequest): Promise<DemoProg
       `B hash=${newElf.elfHash} (${newElf.writeTxCount} writes, cached=${newElf.cached})`
   );
 
-  if (oldElf.elfHash === newElf.elfHash) {
-    throw new Error(
-      `Reconstructed bytecode is identical (elfHash=${oldElf.elfHash}). ` +
-        `Version A cacheKey=${oldElf.cacheKey} · Version B cacheKey=${newElf.cacheKey}. ` +
-        `If these upgrades should differ, verify the upgrade signatures on Solscan.`
-    );
-  }
+  const identicalElf = oldElf.elfHash === newElf.elfHash;
 
   const newBin = elfToFetchedBytecode({
     elf: newElf.elf,
@@ -151,10 +145,9 @@ async function runUpgradeDiffPipeline(req: UpgradeDiffRequest): Promise<DemoProg
     anchorSignature: prevSig,
   });
 
-  if (oldBin.textHash === newBin.textHash) {
-    throw new Error(
-      `Reconstructed bytecode is identical between the selected upgrade and the previous one ` +
-        `(elfHash A=${oldElf.elfHash} B=${newElf.elfHash}).`
+  if (identicalElf || oldBin.textHash === newBin.textHash) {
+    console.info(
+      `[soldiff] No bytecode changes detected (elfHash=${oldElf.elfHash}) — returning analysis report`
     );
   }
 
@@ -220,12 +213,24 @@ function buildReport(params: {
     reconstructionNote,
   } = params;
 
-  const instructionDiff = diffBytecode(oldBin.textSection, newBin.textSection);
-  const accountDiff = diffBytecode(oldBin.rodataSection, newBin.rodataSection);
+  const textUnchanged = oldBin.textHash === newBin.textHash;
+  const identicalDiffLine: DiffLine[] = [
+    { type: "context", lineA: 1, lineB: 1, content: "// Bytecode identical" },
+  ];
 
-  const changedChunks = instructionDiff.filter(
-    (l) => l.type === "added" || l.type === "removed"
-  ).length;
+  let changedChunks = 0;
+  let instructionDiff: DiffLine[] = identicalDiffLine;
+  let accountDiff: DiffLine[] = identicalDiffLine;
+
+  if (textUnchanged) {
+    if (!oldBin.rodataSection.equals(newBin.rodataSection)) {
+      accountDiff = diffBytecode(oldBin.rodataSection, newBin.rodataSection);
+    }
+  } else {
+    changedChunks = countChangedChunks(oldBin.textSection, newBin.textSection);
+    instructionDiff = diffBytecode(oldBin.textSection, newBin.textSection);
+    accountDiff = diffBytecode(oldBin.rodataSection, newBin.rodataSection);
+  }
 
   const ruleCtx = buildRuleContext(oldBin, newBin, changedChunks);
   const findings = runRules(ruleCtx);
@@ -235,7 +240,12 @@ function buildReport(params: {
     .map((f) => f.after ?? "")
     .filter(Boolean);
 
-  const { nodes, edges } = buildBlastRadius(oldBin, newBin, newExternal);
+  const { nodes, edges } = buildBlastRadius(
+    oldBin,
+    newBin,
+    newExternal,
+    ruleCtx.newPubkeys
+  );
 
   const summary = summarizeFindings(findings);
   const riskScore = computeRiskScore(findings);
@@ -253,7 +263,10 @@ function buildReport(params: {
     toSlot,
     fromDate: `slot ${formatSlot(oldBin.slot)}`,
     toDate: `slot ${formatSlot(newBin.slot)}`,
-    description: `Live diff — ${changedChunks} bytecode chunk(s) changed${sigNote}${reconNote}`,
+    description:
+      changedChunks === 0
+        ? `No bytecode changes detected between versions${sigNote}${reconNote}`
+        : `Live diff — ${changedChunks} bytecode chunk(s) changed${sigNote}${reconNote}`,
     riskScore,
     findings,
     instructionDiff,

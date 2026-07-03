@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 import Navbar from "@/app/components/Navbar";
 import ReportPanel from "@/app/components/ReportPanel";
+import RecentUpgradesModal, {
+  type RecentUpgradeProgram,
+} from "@/app/components/recent-upgrades-modal";
 import type { DemoProgram } from "@/app/data/demos";
 import {
   LOADING_STAGES_UI,
@@ -34,9 +37,16 @@ export default function AnalyzePage() {
   const [loadingStage, setLoadingStage] = useState(LOADING_STAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [report, setReport] = useState<DemoProgram | null>(null);
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [reportContext, setReportContext] = useState<ReportContext | undefined>();
+  const [showRecentModal, setShowRecentModal] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentError, setRecentError] = useState<string | null>(null);
+  const [recentPrograms, setRecentPrograms] = useState<RecentUpgradeProgram[]>([]);
+  const [recentGeneratedAt, setRecentGeneratedAt] = useState<number | undefined>();
+  const [recentCurrentSlot, setRecentCurrentSlot] = useState<number | undefined>();
 
   const canDiff =
     Boolean(programId.trim()) &&
@@ -82,9 +92,39 @@ export default function AnalyzePage() {
     setError(null);
   };
 
+  const findRecentUpgrades = async () => {
+    setShowRecentModal(true);
+    setRecentLoading(true);
+    setRecentError(null);
+    try {
+      const res = await fetch("/api/recent-upgrades");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to scan recent upgrades");
+      setRecentPrograms(data.programs ?? []);
+      setRecentGeneratedAt(data.generatedAt);
+      setRecentCurrentSlot(data.currentSlot);
+    } catch (err) {
+      setRecentError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setRecentLoading(false);
+    }
+  };
+
+  const useRecentProgram = (p: RecentUpgradeProgram) => {
+    setProgramId(p.programId);
+    setLabel(p.label ?? "");
+    setPrevUpgradeSignature(p.previousUpgradeSignature);
+    setPrevUpgradeSlot(p.previousUpgradeSlot);
+    setUpgradeSignature(p.latestUpgradeSignature);
+    setUpgradeSlot(p.latestUpgradeSlot);
+    setError(null);
+    setShowRecentModal(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setAnalysisError(null);
     setReport(null);
 
     if (!programId.trim()) {
@@ -153,14 +193,16 @@ export default function AnalyzePage() {
         analysisStartedAt: startedAt,
         analysisCompletedAt: Date.now(),
       });
+      setAnalysisError(null);
       setReport(data.report);
     } catch (err) {
+      setReport(null);
       if (err instanceof Error && err.name === "AbortError") {
-        setError(
+        setAnalysisError(
           "Analysis timed out after 10 minutes. Try a smaller program or check RPC rate limits."
         );
       } else {
-        setError(err instanceof Error ? err.message : "Unknown error");
+        setAnalysisError(err instanceof Error ? err.message : "Unknown error");
       }
     } finally {
       clearTimeout(timeout);
@@ -202,7 +244,10 @@ export default function AnalyzePage() {
             className="analyze-layout"
             style={{
               display: "grid",
-              gridTemplateColumns: report ? "minmax(280px, 340px) minmax(0, 1fr)" : "minmax(300px, 380px) minmax(0, 1fr)",
+              gridTemplateColumns:
+                report || loading || analysisError
+                  ? "minmax(280px, 340px) minmax(0, 1fr)"
+                  : "minmax(300px, 380px) minmax(0, 1fr)",
               gap: 28,
               alignItems: "start",
             }}
@@ -223,6 +268,14 @@ export default function AnalyzePage() {
                 <legend style={{ ...labelStyle, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 4 }}>
                   Program
                 </legend>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={findRecentUpgrades}
+                  style={{ justifyContent: "center" }}
+                >
+                  Find Recent Upgrade
+                </button>
                 <div>
                   <label style={labelStyle}>Program ID *</label>
                   <input
@@ -403,11 +456,22 @@ export default function AnalyzePage() {
               loadingStage={loadingStage}
               loadingProgress={loadingProgress}
               loadingStageIndex={loadingStageIndex}
+              error={analysisError}
               context={reportContext}
             />
           </div>
         </div>
       </main>
+      <RecentUpgradesModal
+        open={showRecentModal}
+        loading={recentLoading}
+        error={recentError}
+        programs={recentPrograms}
+        generatedAt={recentGeneratedAt}
+        currentSlot={recentCurrentSlot}
+        onClose={() => setShowRecentModal(false)}
+        onUseProgram={useRecentProgram}
+      />
     </>
   );
 }

@@ -83,7 +83,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ report });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Diff pipeline failed";
+    let message = err instanceof Error ? err.message : "Diff pipeline failed";
+    if (/heap out of memory|allocation failed/i.test(message)) {
+      message =
+        "Node.js ran out of memory during the bytecode diff phase. Reconstruction succeeded; " +
+        "retry with NODE_OPTIONS=--max-old-space-size=8192 or use the optimized diff path (already enabled for large programs).";
+    }
     console.error("[/api/diff]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }

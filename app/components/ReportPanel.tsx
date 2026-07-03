@@ -12,6 +12,7 @@ interface ReportPanelProps {
   loadingProgress?: number;
   loadingStageIndex?: number;
   emptyMessage?: string;
+  error?: string | null;
   context?: ReportContext;
 }
 
@@ -22,13 +23,31 @@ export default function ReportPanel({
   loadingProgress = 0,
   loadingStageIndex = 0,
   emptyMessage = "Run an analysis to see the security audit report here.",
+  error = null,
   context,
 }: ReportPanelProps) {
-  if (!report && !loading) {
+  if (!report && !loading && !error) {
     return (
       <div className="report-empty">
         <div className="report-empty-icon">◎</div>
         <p>{emptyMessage}</p>
+      </div>
+    );
+  }
+
+  if (!report && !loading && error) {
+    return (
+      <div className="report-error">
+        <div className="report-error-icon" aria-hidden>
+          !
+        </div>
+        <h2 className="report-error-title">Analysis failed</h2>
+        <p className="report-error-message">{error}</p>
+        <p className="report-error-hint">
+          Large programs can exhaust Node heap during diff. Retry with{" "}
+          <code className="report-mono">NODE_OPTIONS=--max-old-space-size=8192</code> or use a
+          smaller program to verify reconstruction.
+        </p>
       </div>
     );
   }

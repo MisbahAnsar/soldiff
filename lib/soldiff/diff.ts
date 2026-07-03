@@ -2,8 +2,12 @@ import { createHash } from "crypto";
 import { PublicKey } from "@solana/web3.js";
 import type { DiffLine } from "@/app/data/demos";
 
-/** Split buffer into fixed-size chunks for structural comparison. */
-function chunkBuffer(buf: Buffer, size = 32): string[] {
+const CHUNK_SIZE = 32;
+/** Above this chunk count, Myers diff trace maps blow heap — use linear scan. */
+const MYERS_CHUNK_LIMIT = 1_500;
+const MAX_DIFF_LINES = 30;
+
+function chunkBuffer(buf: Buffer, size = CHUNK_SIZE): string[] {
   const chunks: string[] = [];
   for (let i = 0; i < buf.length; i += size) {
     const slice = buf.subarray(i, Math.min(i + size, buf.length));
@@ -12,8 +16,88 @@ function chunkBuffer(buf: Buffer, size = 32): string[] {
   return chunks;
 }
 
-/** Myers diff on string arrays — adapted for equal-length chunk sequences. */
-function myersDiff(a: string[], b: string[]): { type: "added" | "removed" | "context"; aIdx?: number; bIdx?: number; value: string }[] {
+function chunkEquals(a: Buffer, b: Buffer): boolean {
+  if (a.length !== b.length) return false;
+  return a.equals(b);
+}
+
+/** Count differing fixed-size chunks without building a full diff. */
+export function countChangedChunks(
+  oldBuf: Buffer,
+  newBuf: Buffer,
+  chunkSize = CHUNK_SIZE
+): number {
+  const total = Math.max(
+    Math.ceil(oldBuf.length / chunkSize) || 0,
+    Math.ceil(newBuf.length / chunkSize) || 0
+  );
+  let count = 0;
+  for (let i = 0; i < total; i++) {
+    const aOff = i * chunkSize;
+    const bOff = i * chunkSize;
+    const a = oldBuf.subarray(aOff, Math.min(aOff + chunkSize, oldBuf.length));
+    const b = newBuf.subarray(bOff, Math.min(bOff + chunkSize, newBuf.length));
+    if (!chunkEquals(a, b)) count++;
+  }
+  return count;
+}
+
+/** Linear scan — O(n) memory, safe for large BPF .text sections. */
+function diffBytecodeLinear(oldBuf: Buffer, newBuf: Buffer): DiffLine[] {
+  const total = Math.max(
+    Math.ceil(oldBuf.length / CHUNK_SIZE) || 0,
+    Math.ceil(newBuf.length / CHUNK_SIZE) || 0
+  );
+  const lines: DiffLine[] = [];
+  let shownChanges = 0;
+  let totalChanges = 0;
+
+  for (let i = 0; i < total; i++) {
+    const aOff = i * CHUNK_SIZE;
+    const bOff = i * CHUNK_SIZE;
+    const a = oldBuf.subarray(aOff, Math.min(aOff + CHUNK_SIZE, oldBuf.length));
+    const b = newBuf.subarray(bOff, Math.min(bOff + CHUNK_SIZE, newBuf.length));
+    if (chunkEquals(a, b)) continue;
+
+    totalChanges++;
+    if (lines.length >= MAX_DIFF_LINES) continue;
+
+    shownChanges++;
+    if (a.length > 0) {
+      lines.push({
+        type: "removed",
+        lineA: i + 1,
+        content: `0x${a.toString("hex")}`,
+      });
+    }
+    if (b.length > 0 && lines.length < MAX_DIFF_LINES) {
+      lines.push({
+        type: "added",
+        lineB: i + 1,
+        content: `0x${b.toString("hex")}`,
+      });
+    }
+  }
+
+  if (totalChanges === 0) {
+    return [{ type: "context", lineA: 1, lineB: 1, content: "// Bytecode identical" }];
+  }
+
+  if (totalChanges > shownChanges) {
+    lines.unshift({
+      type: "context",
+      content: `// ${totalChanges.toLocaleString("en-US")} chunk(s) differ — showing first ${shownChanges} …`,
+    });
+  }
+
+  return lines;
+}
+
+/** Myers diff on string arrays — only for small chunk counts. */
+function myersDiff(
+  a: string[],
+  b: string[]
+): { type: "added" | "removed" | "context"; aIdx?: number; bIdx?: number; value: string }[] {
   const n = a.length;
   const m = b.length;
   const max = n + m;
@@ -86,14 +170,10 @@ function backtrack(
   return result;
 }
 
-export function diffBytecode(oldBuf: Buffer, newBuf: Buffer): DiffLine[] {
-  const oldChunks = chunkBuffer(oldBuf);
-  const newChunks = chunkBuffer(newBuf);
-  const raw = myersDiff(oldChunks, newChunks);
-
+function myersToLines(
+  raw: { type: "added" | "removed" | "context"; aIdx?: number; bIdx?: number; value: string }[]
+): DiffLine[] {
   const lines: DiffLine[] = [];
-  let lineNo = 1;
-
   for (const item of raw) {
     if (item.type === "context") {
       lines.push({
@@ -115,11 +195,24 @@ export function diffBytecode(oldBuf: Buffer, newBuf: Buffer): DiffLine[] {
         content: `0x${item.value}`,
       });
     }
-    lineNo++;
+  }
+  return lines;
+}
+
+export function diffBytecode(oldBuf: Buffer, newBuf: Buffer): DiffLine[] {
+  const oldChunkCount = Math.ceil(oldBuf.length / CHUNK_SIZE) || 0;
+  const newChunkCount = Math.ceil(newBuf.length / CHUNK_SIZE) || 0;
+
+  if (oldChunkCount + newChunkCount > MYERS_CHUNK_LIMIT) {
+    return diffBytecodeLinear(oldBuf, newBuf);
   }
 
-  // Cap output for UI — keep first changes + context around them
-  const changed = lines.filter((l) => l.type !== "context");
+  const oldChunks = chunkBuffer(oldBuf);
+  const newChunks = chunkBuffer(newBuf);
+  const raw = myersDiff(oldChunks, newChunks);
+  const lines = myersToLines(raw);
+
+  const changed = lines.filter((l) => l.type === "added" || l.type === "removed");
   if (changed.length === 0) {
     return [{ type: "context", lineA: 1, lineB: 1, content: "// Bytecode identical" }];
   }
@@ -148,12 +241,14 @@ export function extractStrings(buf: Buffer, minLen = 4): string[] {
     }
   }
   if (current.length >= minLen) strings.push(current);
-  return strings;
+  return strings.slice(0, 200);
 }
 
-export function extractPubkeys(buf: Buffer): string[] {
+/** Sampled pubkey scan — avoids O(n) full-buffer PublicKey attempts. */
+export function extractPubkeys(buf: Buffer, maxKeys = 40): string[] {
   const found = new Set<string>();
-  for (let i = 0; i <= buf.length - 32; i++) {
+  const stride = 8;
+  for (let i = 0; i <= buf.length - 32; i += stride) {
     try {
       const key = new PublicKey(buf.subarray(i, i + 32));
       const b58 = key.toBase58();
@@ -163,6 +258,7 @@ export function extractPubkeys(buf: Buffer): string[] {
     } catch {
       // not a valid pubkey at this offset
     }
+    if (found.size >= maxKeys) break;
   }
   return [...found];
 }

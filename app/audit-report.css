@@ -24,6 +24,52 @@
 
 .report-empty-icon { font-size: 28px; opacity: 0.35; }
 
+.report-error {
+  min-height: 420px;
+  border-radius: 16px;
+  border: 1px solid var(--sev-critical-border);
+  background: var(--sev-critical-soft);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report-error-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--sev-critical);
+  border: 1px solid var(--sev-critical-border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.report-error-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--sev-critical);
+  margin: 0;
+}
+
+.report-error-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.report-error-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
 .report-loading {
   border-radius: 16px;
   border: 1px solid var(--border-strong);
@@ -314,6 +360,11 @@
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-card);
+}
+
+.audit-finding-card.tone-safe {
+  border-color: rgba(107, 207, 143, 0.35);
+  background: rgba(107, 207, 143, 0.06);
 }
 
 .audit-finding-head {

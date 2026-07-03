@@ -6,7 +6,8 @@ import { extractPubkeys } from "./diff";
 export function buildBlastRadius(
   oldBin: FetchedBytecode,
   newBin: FetchedBytecode,
-  newExternalPrograms: string[]
+  newExternalPrograms: string[],
+  referencedPubkeys?: Set<string>
 ): { nodes: AccountNode[]; edges: AccountEdge[] } {
   const programNode: AccountNode = {
     id: "program",
@@ -19,10 +20,12 @@ export function buildBlastRadius(
   const nodes: AccountNode[] = [programNode];
   const edges: AccountEdge[] = [];
 
-  const allPubkeys = new Set([
-    ...extractPubkeys(newBin.textSection),
-    ...extractPubkeys(newBin.rodataSection),
-  ]);
+  const allPubkeys =
+    referencedPubkeys ??
+    new Set([
+      ...extractPubkeys(newBin.textSection),
+      ...extractPubkeys(newBin.rodataSection),
+    ]);
 
   // Upgrade authority from program data header isn't parsed here — add programdata node
   nodes.push({
