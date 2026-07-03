@@ -1,26 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Navbar from "@/app/components/Navbar";
 import ReportPanel from "@/app/components/ReportPanel";
 import type { DemoProgram } from "@/app/data/demos";
-import {
-  LOADING_STAGES_UI,
-  type ReportContext,
-} from "@/app/lib/report-presenter";
+import { PROVEN_EXAMPLE } from "@/app/analyze/constants";
+import { LOADING_STAGES_UI, type ReportContext } from "@/app/lib/report-presenter";
 
 const LOADING_STAGES = [...LOADING_STAGES_UI];
-
-const PROVEN_EXAMPLE = {
-  label: "Solayer endoAVS Program",
-  programId: "endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
-  solscanUrl: "https://solscan.io/account/endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
-  prevUpgradeSignature:
-    "5BzTSCsM5PLEx2zcucUHS14Xo2yQa112UN8D6C4s38j25nHA4FWnLSQsGQyVnJFy8qFXas7UF9qGxN13DSkg7tFq",
-  upgradeSignature:
-    "2b6hpipHgNsF24b5Sb2wUHNtbMhdVPNMhvL73ANxdPmQb14MJjQWJpym9gawYDtfSup2LfJ45iEX86c1WgsfXU3s",
-} as const;
 
 export default function AnalyzePage() {
   const [programId, setProgramId] = useState("");
@@ -31,32 +19,17 @@ export default function AnalyzePage() {
   const [upgradeSlot, setUpgradeSlot] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(LOADING_STAGES[0]);
+  const [loadingStageIndex, setLoadingStageIndex] = useState(0);
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [report, setReport] = useState<DemoProgram | null>(null);
-  const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [reportContext, setReportContext] = useState<ReportContext | undefined>();
-  const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
 
   const canDiff =
     Boolean(programId.trim()) &&
     Boolean(prevUpgradeSignature.trim()) &&
     Boolean(upgradeSignature.trim());
-
-  const isProvenExampleActive =
-    programId.trim() === PROVEN_EXAMPLE.programId &&
-    label.trim() === PROVEN_EXAMPLE.label &&
-    prevUpgradeSignature.trim() === PROVEN_EXAMPLE.prevUpgradeSignature &&
-    upgradeSignature.trim() === PROVEN_EXAMPLE.upgradeSignature;
-
-  useEffect(() => {
-    if (!loading || analysisStartedAt === null) return;
-    const tick = () => setElapsedMs(Date.now() - analysisStartedAt);
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
-  }, [loading, analysisStartedAt]);
 
   const fillProvenExample = () => {
     setProgramId(PROVEN_EXAMPLE.programId);
@@ -66,6 +39,7 @@ export default function AnalyzePage() {
     setPrevUpgradeSlot(null);
     setUpgradeSlot(null);
     setError(null);
+    setAnalysisError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -92,9 +66,8 @@ export default function AnalyzePage() {
     }
 
     const startedAt = Date.now();
-    setAnalysisStartedAt(startedAt);
-    setElapsedMs(0);
     setLoading(true);
+    setLoadingStartedAt(startedAt);
     setLoadingStageIndex(0);
     setLoadingStage(LOADING_STAGES[0]);
 
@@ -151,7 +124,7 @@ export default function AnalyzePage() {
       clearTimeout(timeout);
       clearInterval(stageTimer);
       setLoading(false);
-      setAnalysisStartedAt(null);
+      setLoadingStartedAt(undefined);
     }
   };
 
@@ -161,7 +134,10 @@ export default function AnalyzePage() {
       <main style={{ paddingTop: 80, minHeight: "100vh", background: "var(--bg-base)" }}>
         <div className="container-wide" style={{ paddingBottom: 80 }}>
           <div style={{ marginBottom: 32 }}>
-            <Link href="/" style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}>
+            <Link
+              href="/"
+              style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}
+            >
               ← Back to home
             </Link>
             <h1
@@ -191,31 +167,9 @@ export default function AnalyzePage() {
             </p>
           </div>
 
-          <div
-            className="analyze-layout"
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                report || loading || analysisError
-                  ? "minmax(280px, 340px) minmax(0, 1fr)"
-                  : "minmax(300px, 380px) minmax(0, 1fr)",
-              gap: 28,
-              alignItems: "start",
-            }}
-          >
-            <form
-              onSubmit={handleSubmit}
-              style={{
-                padding: 24,
-                borderRadius: 14,
-                border: "1px solid var(--border-strong)",
-                background: "var(--bg-surface)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 20,
-              }}
-            >
-              <div className="analyze-tip-callout">
+          <div className="analyze-layout">
+            <form onSubmit={handleSubmit} className="analyze-form">
+              <div className="analyze-tip">
                 <span className="analyze-tip-label">Tip</span>
                 <p>
                   For the best experience, use upgradeable programs under 450,000 bytes. Larger
@@ -224,73 +178,22 @@ export default function AnalyzePage() {
                 </p>
               </div>
 
-              <fieldset
-                style={{
-                  border: "none",
-                  padding: 0,
-                  margin: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
+              <button
+                type="button"
+                className="analyze-example-btn"
+                onClick={fillProvenExample}
               >
-                <legend
-                  style={{
-                    ...labelStyle,
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-muted)",
-                    marginBottom: 4,
-                  }}
-                >
-                  Proven example
-                </legend>
-                <button
-                  type="button"
-                  className={`analyze-example-btn${isProvenExampleActive ? " is-active" : ""}`}
-                  onClick={fillProvenExample}
-                >
-                  <span className="analyze-example-badge">Proven working example</span>
-                  <span className="analyze-example-title">
-                    Solayer endoAVS — proven historical upgrade diff
-                  </span>
-                  <span className="analyze-example-meta">
-                    {PROVEN_EXAMPLE.programId.slice(0, 8)}…{PROVEN_EXAMPLE.programId.slice(-4)}
-                  </span>
-                </button>
-                <a
-                  href={PROVEN_EXAMPLE.solscanUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="analyze-example-link"
-                >
-                  View on Solscan ↗
-                </a>
-              </fieldset>
+                <span className="analyze-example-badge">Proven example</span>
+                <span className="analyze-example-title">
+                  Solayer endoAVS — proven historical upgrade diff
+                </span>
+                <span className="analyze-example-sub report-mono">
+                  {PROVEN_EXAMPLE.programId.slice(0, 12)}…
+                </span>
+              </button>
 
-              <fieldset
-                style={{
-                  border: "none",
-                  padding: 0,
-                  margin: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
-              >
-                <legend
-                  style={{
-                    ...labelStyle,
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-muted)",
-                    marginBottom: 4,
-                  }}
-                >
-                  Program
-                </legend>
+              <fieldset className="analyze-fieldset">
+                <legend className="analyze-legend">Program</legend>
                 <div>
                   <label style={labelStyle}>Program ID *</label>
                   <input
@@ -302,7 +205,16 @@ export default function AnalyzePage() {
                     spellCheck={false}
                   />
                   <p style={hintStyle}>
-                    Executable program address from Solscan — not ProgramData.
+                    Executable program address from{" "}
+                    <a
+                      href={PROVEN_EXAMPLE.solscanUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      Solscan
+                    </a>{" "}
+                    — not ProgramData.
                   </p>
                 </div>
                 <div>
@@ -316,28 +228,8 @@ export default function AnalyzePage() {
                 </div>
               </fieldset>
 
-              <fieldset
-                style={{
-                  border: "none",
-                  padding: 0,
-                  margin: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
-              >
-                <legend
-                  style={{
-                    ...labelStyle,
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-muted)",
-                    marginBottom: 4,
-                  }}
-                >
-                  Version A — before upgrade
-                </legend>
+              <fieldset className="analyze-fieldset">
+                <legend className="analyze-legend">Version A — before upgrade</legend>
                 <div>
                   <label style={labelStyle}>Upgrade transaction signature *</label>
                   <input
@@ -355,28 +247,8 @@ export default function AnalyzePage() {
                 </div>
               </fieldset>
 
-              <fieldset
-                style={{
-                  border: "none",
-                  padding: 0,
-                  margin: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
-              >
-                <legend
-                  style={{
-                    ...labelStyle,
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-muted)",
-                    marginBottom: 4,
-                  }}
-                >
-                  Version B — after upgrade
-                </legend>
+              <fieldset className="analyze-fieldset">
+                <legend className="analyze-legend">Version B — after upgrade</legend>
                 <div>
                   <label style={labelStyle}>Upgrade transaction signature *</label>
                   <input
@@ -395,25 +267,13 @@ export default function AnalyzePage() {
               </fieldset>
 
               {error && (
-                <div
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background: "var(--sev-critical-soft)",
-                    border: "1px solid var(--sev-critical-border)",
-                    color: "var(--sev-critical)",
-                    fontSize: 12.5,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {error}
-                </div>
+                <div className="analyze-form-error">{error}</div>
               )}
 
               <p className="analyze-runtime-note">
                 Large programs can take 4–6 minutes to reconstruct and compare. For faster, more
                 reliable results, use programs under 450,000 bytes. Programs larger than 450,000
-                bytes may take significantly longer or exceed available memory/time limits.
+                bytes may take significantly longer or exceed available memory and time limits.
               </p>
 
               <button
@@ -431,7 +291,7 @@ export default function AnalyzePage() {
               loading={loading}
               loadingStage={loadingStage}
               loadingStageIndex={loadingStageIndex}
-              elapsedMs={elapsedMs}
+              loadingStartedAt={loadingStartedAt}
               error={analysisError}
               context={reportContext}
             />

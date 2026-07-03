@@ -1,11 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import type { DemoProgram, Severity } from "@/app/data/demos";
+import type { DemoProgram, Finding } from "@/app/data/demos";
 import BlastRadius from "@/app/components/BlastRadius";
 import DiffViewer from "@/app/components/DiffViewer";
-import { AddressField } from "@/app/components/report/ReportChrome";
 import {
+  AddressField,
+  SeverityBadge,
+  StatGrid,
+} from "@/app/components/report/ReportChrome";
+import {
+  executiveBullets,
   formatElapsed,
   formatTimestamp,
   getRiskBanner,
@@ -13,61 +18,22 @@ import {
   parseReconstructionMeta,
   presentFinding,
   sectionStatus,
+  severityLabel,
   type ReportContext,
 } from "@/app/lib/report-presenter";
 
-const SEVERITY_CONFIG: Record<
-  Severity,
-  { color: string; soft: string; border: string; label: string; mark: string }
-> = {
-  CRITICAL: {
-    color: "var(--sev-critical)",
-    soft: "var(--sev-critical-soft)",
-    border: "var(--sev-critical-border)",
-    label: "Critical",
-    mark: "C",
-  },
-  HIGH: {
-    color: "var(--sev-high)",
-    soft: "var(--sev-high-soft)",
-    border: "var(--sev-high-border)",
-    label: "High",
-    mark: "H",
-  },
-  MEDIUM: {
-    color: "var(--sev-medium)",
-    soft: "var(--sev-medium-soft)",
-    border: "var(--sev-medium-border)",
-    label: "Medium",
-    mark: "M",
-  },
-  LOW: {
-    color: "var(--sev-low)",
-    soft: "var(--sev-low-soft)",
-    border: "var(--sev-low-border)",
-    label: "Low",
-    mark: "L",
-  },
-  INFO: {
-    color: "var(--sev-info)",
-    soft: "var(--sev-info-soft)",
-    border: "var(--sev-info-border)",
-    label: "Info",
-    mark: "I",
-  },
-};
+const SECTIONS = [
+  { id: "summary", label: "Summary" },
+  { id: "risk", label: "Risk" },
+  { id: "findings", label: "Findings" },
+  { id: "sections", label: "Sections" },
+  { id: "bytecode", label: "Bytecode" },
+  { id: "blast", label: "Blast radius" },
+  { id: "reconstruction", label: "Reconstruction" },
+  { id: "versions", label: "Versions" },
+] as const;
 
-type Tab = "findings" | "instruction" | "accounts" | "blast" | "details";
-
-const TAB_LABELS: Record<Tab, string> = {
-  findings: "Findings",
-  instruction: "Bytecode",
-  accounts: "Rodata",
-  blast: "Blast radius",
-  details: "Details",
-};
-
-const PANEL_H = 544;
+type SectionId = (typeof SECTIONS)[number]["id"];
 
 interface Props {
   report: DemoProgram;
@@ -75,9 +41,9 @@ interface Props {
 }
 
 export default function AuditReport({ report, context }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>("findings");
+  const [activeSection, setActiveSection] = useState<SectionId>("summary");
   const [expandedFinding, setExpandedFinding] = useState<string | null>(
-    report.findings[0]?.id ?? null
+    report.findings.find((f) => f.code !== "NO_CHANGE")?.id ?? null
   );
 
   const risk = getRiskLevel(report.riskScore);
@@ -85,13 +51,16 @@ export default function AuditReport({ report, context }: Props) {
   const recon = parseReconstructionMeta(report.description);
   const textStatus = sectionStatus(report.instructionDiff, "text");
   const rodataStatus = sectionStatus(report.accountDiff, "rodata");
-  const visibleFindings = report.findings.filter((f) => f.code !== "NO_CHANGE");
-  const displayFindings =
-    visibleFindings.length > 0 ? visibleFindings : report.findings;
+  const bullets = executiveBullets(report);
+  const totalFindings = report.findings.filter((f) => f.code !== "NO_CHANGE").length;
   const elapsed =
     context?.analysisStartedAt && context?.analysisCompletedAt
       ? formatElapsed(context.analysisCompletedAt - context.analysisStartedAt)
       : "—";
+
+  const noChangeFinding = report.findings.find((f) => f.code === "NO_CHANGE");
+  const visibleFindings = report.findings.filter((f) => f.code !== "NO_CHANGE");
+  const displayFindings = noChangeFinding ? [noChangeFinding] : visibleFindings;
 
   const riskColor =
     report.riskScore >= 80
@@ -102,140 +71,293 @@ export default function AuditReport({ report, context }: Props) {
           ? "var(--sev-medium)"
           : "var(--sev-safe)";
 
-  const tabCount = (tab: Tab) => {
-    switch (tab) {
-      case "findings":
-        return displayFindings.length;
-      case "instruction":
-        return report.instructionDiff.filter(
-          (l) => l.type === "added" || l.type === "removed"
-        ).length;
-      case "accounts":
-        return report.accountDiff.filter((l) => l.type === "added" || l.type === "removed").length;
-      case "blast":
-        return report.blastNodes.filter((n) => n.changed).length;
-      case "details":
-        return 1;
-    }
-  };
-
   return (
-    <div className="analyze-playground-panel" style={{ height: PANEL_H, minHeight: PANEL_H }}>
-      {recon.cacheHit && (
-        <div className="analyze-playground-cache">
-          <span className="audit-cache-dot" aria-hidden />
-          ELF loaded from cache
+    <div className="audit-playground">
+      <aside className="audit-playground-nav" aria-label="Report sections">
+        <div className="audit-playground-nav-head">
+          <span>Sections</span>
+          <span className="audit-playground-nav-count">{SECTIONS.length}</span>
         </div>
-      )}
-
-      <div className="analyze-playground-header">
-        <RiskMeter score={report.riskScore} color={riskColor} />
-        <div className="analyze-playground-header-main">
-          <div className="analyze-playground-header-row">
-            <span className="analyze-playground-program-name">{report.name}</span>
-            <span
-              className="analyze-playground-risk-tag"
-              style={{ borderColor: riskColor, color: riskColor }}
-            >
-              {risk.label}
-            </span>
-          </div>
-          <div className="analyze-playground-header-meta report-mono">
-            <span>
-              {report.programId.slice(0, 14)}…{report.programId.slice(-4)}
-            </span>
-            <span>·</span>
-            <span>
-              {report.fromSlot.toLocaleString("en-US")} → {report.toSlot.toLocaleString("en-US")}
-            </span>
-          </div>
-          <p className={`analyze-playground-banner tone-${banner.tone}`}>{banner.reason}</p>
-        </div>
-        <div className="analyze-playground-severity-counts">
-          {(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as Severity[]).map((sev) => {
-            const count = report.summary[sev.toLowerCase() as keyof typeof report.summary] as number;
-            if (!count) return null;
-            const cfg = SEVERITY_CONFIG[sev];
+        <div className="audit-playground-nav-list">
+          {SECTIONS.map((item) => {
+            const isActive = activeSection === item.id;
+            const badge =
+              item.id === "findings"
+                ? totalFindings || (noChangeFinding ? 1 : 0)
+                : item.id === "bytecode"
+                  ? report.instructionDiff.filter(
+                      (l) => l.type === "added" || l.type === "removed"
+                    ).length
+                  : null;
             return (
-              <div
-                key={sev}
-                className="analyze-playground-sev-pill"
-                style={{ borderColor: cfg.border }}
+              <button
+                key={item.id}
+                type="button"
+                className={`audit-playground-nav-btn${isActive ? " is-active" : ""}`}
+                onClick={() => setActiveSection(item.id)}
               >
-                <span className="analyze-playground-sev-mark" style={{ color: cfg.color }}>
-                  {cfg.mark}
-                </span>
-                <span style={{ color: cfg.color }}>{count}</span>
-              </div>
+                {item.label}
+                {badge !== null && badge > 0 && (
+                  <span className="audit-playground-nav-badge">{badge}</span>
+                )}
+              </button>
             );
           })}
         </div>
-      </div>
-
-      <div className="analyze-playground-tabs">
-        {(Object.keys(TAB_LABELS) as Tab[]).map((tab) => {
-          const isActive = tab === activeTab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              className={`analyze-playground-tab${isActive ? " is-active" : ""}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {TAB_LABELS[tab]}
-              <span className="analyze-playground-tab-count">{tabCount(tab)}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="analyze-playground-content">
-        <div className="analyze-playground-content-inner">
-          {activeTab === "findings" && (
-            <FindingsPanel
-              findings={displayFindings}
-              expandedId={expandedFinding}
-              onExpand={setExpandedFinding}
-            />
-          )}
-          {activeTab === "instruction" && (
-            <DiffViewer lines={report.instructionDiff} title=".text section diff" compact />
-          )}
-          {activeTab === "accounts" && (
-            <DiffViewer lines={report.accountDiff} title=".rodata section diff" compact />
-          )}
-          {activeTab === "blast" && (
-            <BlastRadius nodes={report.blastNodes} edges={report.blastEdges} compact />
-          )}
-          {activeTab === "details" && (
-            <DetailsPanel
-              report={report}
-              context={context}
-              textStatus={textStatus.label}
-              rodataStatus={rodataStatus.label}
-              elapsed={elapsed}
-              recon={recon}
-            />
-          )}
+        <div className="audit-playground-nav-foot">
+          Live data from on-chain reconstruction
         </div>
-      </div>
+      </aside>
 
-      <div className="analyze-playground-footer">
-        <div className="analyze-playground-footer-stats">
-          {[
-            ["Findings", displayFindings.length],
-            ["CPI targets", report.summary.newCpiTargets],
-            ["Elapsed", elapsed],
-          ].map(([label, val]) => (
-            <div key={label as string} className="analyze-playground-stat">
-              <span>{label}</span>
-              <strong>{val}</strong>
+      <div className="audit-playground-main">
+        <div className="audit-playground-header">
+          <RiskMeter score={report.riskScore} color={riskColor} />
+          <div className="audit-playground-header-meta">
+            <div className="audit-playground-header-title">
+              <span>{report.name}</span>
+              <span className="audit-playground-risk-tag" style={{ borderColor: riskColor, color: riskColor }}>
+                {risk.label}
+              </span>
             </div>
-          ))}
+            <div className="audit-playground-header-sub report-mono">
+              {report.programId.slice(0, 14)}…{report.programId.slice(-4)}
+              <span> · </span>
+              {report.fromSlot.toLocaleString("en-US")} → {report.toSlot.toLocaleString("en-US")}
+            </div>
+          </div>
+          {recon.cacheHit && (
+            <span className="playground-badge playground-badge-cache">cache hit</span>
+          )}
         </div>
-        <span className="analyze-playground-footer-time report-mono">
-          {formatTimestamp(context?.analysisCompletedAt)}
-        </span>
+
+        <div className="audit-playground-content">
+          {activeSection === "summary" && (
+            <div className="audit-panel-scroll">
+              <div className="audit-panel-block">
+                <div className="audit-panel-eyebrow">SolDiff Upgrade Report</div>
+                <div className="audit-summary-grid">
+                  <SummaryStat label="Overall risk" value={`${report.riskScore}/100`} accent={riskColor} />
+                  <SummaryStat label="Findings" value={String(totalFindings)} />
+                  <SummaryStat label="Analysis time" value={elapsed} />
+                  <SummaryStat
+                    label="Reconstruction"
+                    value={recon.cacheHit ? "Cache hit" : "Complete"}
+                  />
+                </div>
+                <AddressField label="Program ID" value={report.programId} />
+                <ul className="audit-bullet-list compact">
+                  {bullets.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+                <p className="audit-muted compact">{report.description}</p>
+              </div>
+            </div>
+          )}
+
+          {activeSection === "risk" && (
+            <div className="audit-panel-scroll">
+              <div className={`audit-risk-banner tone-${banner.tone} flat`}>
+                <div className="audit-risk-banner-title">{banner.title}</div>
+                <p className="audit-risk-banner-reason">{banner.reason}</p>
+              </div>
+              <div className="audit-panel-block">
+                <StatGrid
+                  items={[
+                    { label: "Risk score", value: `${report.riskScore}/100` },
+                    { label: "Critical", value: String(report.summary.critical) },
+                    { label: "High", value: String(report.summary.high) },
+                    { label: "Medium", value: String(report.summary.medium) },
+                    { label: "New CPI targets", value: String(report.summary.newCpiTargets) },
+                    { label: "Instructions changed", value: String(report.summary.instructionsChanged) },
+                  ]}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeSection === "findings" && (
+            <div className="audit-panel-scroll">
+              {displayFindings.length === 0 ? (
+                <p className="audit-muted">No security findings for this upgrade pair.</p>
+              ) : (
+                <FindingsList
+                  findings={displayFindings}
+                  expandedId={expandedFinding}
+                  onExpand={setExpandedFinding}
+                />
+              )}
+            </div>
+          )}
+
+          {activeSection === "sections" && (
+            <div className="audit-panel-scroll">
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th>Section</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>.text</td>
+                    <td>
+                      <span className={textStatus.tone === "changed" ? "status-changed" : "status-ok"}>
+                        {textStatus.label}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>.rodata</td>
+                    <td>
+                      <span className={rodataStatus.tone === "changed" ? "status-changed" : "status-ok"}>
+                        {rodataStatus.label}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Program size</td>
+                    <td>
+                      <span className={textStatus.tone === "changed" ? "status-changed" : "status-ok"}>
+                        {textStatus.tone === "changed" ? "Changed" : "Same"}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>ELF header</td>
+                    <td>
+                      <span className="status-ok">Unchanged</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activeSection === "bytecode" && (
+            <div className="audit-panel-scroll">
+              <DiffViewer lines={report.instructionDiff} title=".text section" compact />
+              <div style={{ height: 12 }} />
+              <DiffViewer lines={report.accountDiff} title=".rodata section" compact />
+            </div>
+          )}
+
+          {activeSection === "blast" && (
+            <div className="audit-panel-scroll audit-panel-blast">
+              <BlastRadius nodes={report.blastNodes} edges={report.blastEdges} compact />
+            </div>
+          )}
+
+          {activeSection === "reconstruction" && (
+            <div className="audit-panel-scroll">
+              <StatGrid
+                items={[
+                  {
+                    label: "Program size",
+                    value: textStatus.tone === "changed" ? "Changed" : "Stable",
+                  },
+                  {
+                    label: "Writes (Version A)",
+                    value: recon.writesA !== null ? String(recon.writesA) : "—",
+                  },
+                  {
+                    label: "Writes (Version B)",
+                    value: recon.writesB !== null ? String(recon.writesB) : "—",
+                  },
+                  { label: "Elapsed", value: elapsed },
+                  { label: "RPC provider", value: "Alchemy Archive" },
+                  { label: "Cache", value: recon.cacheHit ? "Hit" : "Miss" },
+                ]}
+              />
+            </div>
+          )}
+
+          {activeSection === "versions" && (
+            <div className="audit-panel-scroll">
+              <div className="audit-version-grid">
+                <div className="audit-version-col">
+                  <h4 className="audit-version-heading">Version A — before</h4>
+                  {context?.prevUpgradeSignature ? (
+                    <>
+                      <AddressField
+                        label="Upgrade signature"
+                        value={context.prevUpgradeSignature}
+                        kind="tx"
+                      />
+                      <div className="audit-version-meta">
+                        <span>Slot</span>
+                        <code className="report-mono">
+                          {(context.prevUpgradeSlot ?? report.fromSlot).toLocaleString("en-US")}
+                        </code>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="audit-muted">Slot {report.fromSlot.toLocaleString("en-US")}</p>
+                  )}
+                </div>
+                <div className="audit-version-col">
+                  <h4 className="audit-version-heading">Version B — after</h4>
+                  {context?.upgradeSignature ? (
+                    <>
+                      <AddressField
+                        label="Upgrade signature"
+                        value={context.upgradeSignature}
+                        kind="tx"
+                      />
+                      <div className="audit-version-meta">
+                        <span>Slot</span>
+                        <code className="report-mono">
+                          {(context.upgradeSlot ?? report.toSlot).toLocaleString("en-US")}
+                        </code>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="audit-muted">Slot {report.toSlot.toLocaleString("en-US")}</p>
+                  )}
+                </div>
+              </div>
+              <p className="audit-muted compact" style={{ marginTop: 16 }}>
+                Completed {formatTimestamp(context?.analysisCompletedAt)}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="audit-playground-footer">
+          <div className="audit-playground-footer-stats">
+            <span>
+              Instructions changed{" "}
+              <strong>{report.summary.instructionsChanged}</strong>
+            </span>
+            <span>
+              New CPI targets <strong>{report.summary.newCpiTargets}</strong>
+            </span>
+            <span>
+              Blast nodes changed{" "}
+              <strong>{report.blastNodes.filter((n) => n.changed).length}</strong>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+}) {
+  return (
+    <div className="audit-summary-stat">
+      <div className="audit-summary-stat-label">{label}</div>
+      <div className="audit-summary-stat-value" style={accent ? { color: accent } : undefined}>
+        {value}
       </div>
     </div>
   );
@@ -246,7 +368,7 @@ function RiskMeter({ score, color }: { score: number; color: string }) {
   const strokeDashoffset = circumference - (score / 100) * circumference;
 
   return (
-    <div className="analyze-playground-risk-meter">
+    <div className="audit-risk-meter">
       <svg width="46" height="46" viewBox="0 0 56 56" style={{ transform: "rotate(-90deg)" }}>
         <circle cx="28" cy="28" r="22" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
         <circle
@@ -261,136 +383,58 @@ function RiskMeter({ score, color }: { score: number; color: string }) {
           strokeLinecap="round"
         />
       </svg>
-      <div className="analyze-playground-risk-meter-label">
+      <div className="audit-risk-meter-label">
         <span style={{ color }}>{score}</span>
-        <small>Risk</small>
+        <span>Risk</span>
       </div>
     </div>
   );
 }
 
-function FindingsPanel({
+function FindingsList({
   findings,
   expandedId,
   onExpand,
 }: {
-  findings: DemoProgram["findings"];
+  findings: Finding[];
   expandedId: string | null;
   onExpand: (id: string | null) => void;
 }) {
-  if (findings.length === 0) {
-    return <p className="analyze-playground-muted">No security findings for this upgrade pair.</p>;
-  }
-
   return (
-    <div className="analyze-playground-findings">
+    <div className="audit-findings-compact">
       {findings.map((f) => {
-        const cfg = SEVERITY_CONFIG[f.severity];
         const p = presentFinding(f);
         const isExpanded = expandedId === f.id;
+        const isNoChange = f.code === "NO_CHANGE";
         return (
           <div
             key={f.id}
-            className={`analyze-playground-finding${isExpanded ? " is-expanded" : ""}`}
-            style={{ borderLeftColor: cfg.color }}
+            className={`audit-finding-row${isExpanded ? " is-expanded" : ""}${isNoChange ? " tone-safe" : ""}`}
           >
             <button
               type="button"
-              className="analyze-playground-finding-toggle"
+              className="audit-finding-row-btn"
               onClick={() => onExpand(isExpanded ? null : f.id)}
             >
-              <span className="analyze-playground-finding-mark" style={{ color: cfg.color }}>
+              <span className="audit-finding-row-icon" aria-hidden>
                 {p.icon}
               </span>
-              <span className="analyze-playground-finding-code report-mono">{f.code}</span>
-              <span className="analyze-playground-finding-title">{p.title}</span>
-              <span className="analyze-playground-finding-chevron" aria-hidden>
-                ▾
-              </span>
+              <span className="audit-finding-row-title">{p.title}</span>
+              <SeverityBadge severity={severityLabel(f.severity)} />
             </button>
             {isExpanded && (
-              <div className="analyze-playground-finding-body">
+              <div className="audit-finding-row-body">
                 <p>{f.description}</p>
-                <div className="analyze-playground-finding-rec">{f.recommendation}</div>
+                {f.after && <AddressField label="Program / target" value={f.after} />}
+                <div className="audit-finding-rec compact">
+                  <div className="audit-finding-rec-label">Recommendation</div>
+                  <p>{f.recommendation}</p>
+                </div>
               </div>
             )}
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function DetailsPanel({
-  report,
-  context,
-  textStatus,
-  rodataStatus,
-  elapsed,
-  recon,
-}: {
-  report: DemoProgram;
-  context?: ReportContext;
-  textStatus: string;
-  rodataStatus: string;
-  elapsed: string;
-  recon: ReturnType<typeof parseReconstructionMeta>;
-}) {
-  return (
-    <div className="analyze-playground-details">
-      <table className="audit-table">
-        <thead>
-          <tr>
-            <th>Section</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>.text</td>
-            <td>{textStatus}</td>
-          </tr>
-          <tr>
-            <td>.rodata</td>
-            <td>{rodataStatus}</td>
-          </tr>
-          <tr>
-            <td>Writes (A / B)</td>
-            <td>
-              {recon.writesA ?? "—"} / {recon.writesB ?? "—"}
-            </td>
-          </tr>
-          <tr>
-            <td>Elapsed</td>
-            <td>{elapsed}</td>
-          </tr>
-          <tr>
-            <td>Cache</td>
-            <td>{recon.cacheHit ? "Hit" : "Miss"}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div className="analyze-playground-version-grid">
-        <div>
-          <h4>Version A</h4>
-          {context?.prevUpgradeSignature ? (
-            <AddressField label="Upgrade tx" value={context.prevUpgradeSignature} kind="tx" />
-          ) : (
-            <p className="analyze-playground-muted">
-              Slot {report.fromSlot.toLocaleString("en-US")}
-            </p>
-          )}
-        </div>
-        <div>
-          <h4>Version B</h4>
-          {context?.upgradeSignature ? (
-            <AddressField label="Upgrade tx" value={context.upgradeSignature} kind="tx" />
-          ) : (
-            <p className="analyze-playground-muted">Slot {report.toSlot.toLocaleString("en-US")}</p>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
