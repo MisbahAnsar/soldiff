@@ -254,71 +254,73 @@ export default function AuditReport({ report, context }: Props) {
               <StatGrid
                 items={[
                   {
-                    label: "Program size",
-                    value: textStatus.tone === "changed" ? "Changed" : "Stable",
+                    label: "Method",
+                    value:
+                      context?.versionA?.reconstructionMethod ??
+                      context?.versionB?.reconstructionMethod ??
+                      "buffer-write-replay",
                   },
                   {
                     label: "Writes (Version A)",
-                    value: recon.writesA !== null ? String(recon.writesA) : "—",
+                    value:
+                      context?.versionA?.writeTransactionCount !== undefined
+                        ? String(context.versionA.writeTransactionCount)
+                        : recon.writesA !== null
+                          ? String(recon.writesA)
+                          : "—",
                   },
                   {
                     label: "Writes (Version B)",
-                    value: recon.writesB !== null ? String(recon.writesB) : "—",
+                    value:
+                      context?.versionB?.writeTransactionCount !== undefined
+                        ? String(context.versionB.writeTransactionCount)
+                        : recon.writesB !== null
+                          ? String(recon.writesB)
+                          : "—",
                   },
                   { label: "Elapsed", value: elapsed },
-                  { label: "RPC provider", value: "Alchemy Archive" },
-                  { label: "Cache", value: recon.cacheHit ? "Hit" : "Miss" },
+                  {
+                    label: "Coverage A/B",
+                    value: `${context?.versionA?.coverageComplete ?? "?"} / ${context?.versionB?.coverageComplete ?? "?"}`,
+                  },
+                  {
+                    label: "Verified build",
+                    value: "Not claimed",
+                  },
                 ]}
               />
+              {context?.limitations && context.limitations.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <h4 className="audit-version-heading">Limitations</h4>
+                  <ul className="audit-muted" style={{ paddingLeft: 18, fontSize: 13 }}>
+                    {context.limitations.map((lim) => (
+                      <li key={lim}>{lim}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
           {activeSection === "versions" && (
             <div className="audit-panel-scroll">
               <div className="audit-version-grid">
-                <div className="audit-version-col">
-                  <h4 className="audit-version-heading">Version A — before</h4>
-                  {context?.prevUpgradeSignature ? (
-                    <>
-                      <AddressField
-                        label="Upgrade signature"
-                        value={context.prevUpgradeSignature}
-                        kind="tx"
-                      />
-                      <div className="audit-version-meta">
-                        <span>Slot</span>
-                        <code className="report-mono">
-                          {(context.prevUpgradeSlot ?? report.fromSlot).toLocaleString("en-US")}
-                        </code>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="audit-muted">Slot {report.fromSlot.toLocaleString("en-US")}</p>
-                  )}
-                </div>
-                <div className="audit-version-col">
-                  <h4 className="audit-version-heading">Version B — after</h4>
-                  {context?.upgradeSignature ? (
-                    <>
-                      <AddressField
-                        label="Upgrade signature"
-                        value={context.upgradeSignature}
-                        kind="tx"
-                      />
-                      <div className="audit-version-meta">
-                        <span>Slot</span>
-                        <code className="report-mono">
-                          {(context.upgradeSlot ?? report.toSlot).toLocaleString("en-US")}
-                        </code>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="audit-muted">Slot {report.toSlot.toLocaleString("en-US")}</p>
-                  )}
-                </div>
+                <ProvenanceColumn
+                  title="Version A — before"
+                  fallbackSig={context?.prevUpgradeSignature}
+                  fallbackSlot={context?.prevUpgradeSlot ?? report.fromSlot}
+                  provenance={context?.versionA}
+                />
+                <ProvenanceColumn
+                  title="Version B — after"
+                  fallbackSig={context?.upgradeSignature}
+                  fallbackSlot={context?.upgradeSlot ?? report.toSlot}
+                  provenance={context?.versionB}
+                />
               </div>
               <p className="audit-muted compact" style={{ marginTop: 16 }}>
                 Completed {formatTimestamp(context?.analysisCompletedAt)}
+                {context?.framework ? ` · framework heuristic: ${context.framework}` : ""}
               </p>
             </div>
           )}
@@ -331,7 +333,7 @@ export default function AuditReport({ report, context }: Props) {
               <strong>{report.summary.instructionsChanged}</strong>
             </span>
             <span>
-              New CPI targets <strong>{report.summary.newCpiTargets}</strong>
+              Pubkey candidates <strong>{report.summary.accountsAffected}</strong>
             </span>
             <span>
               Blast nodes changed{" "}
@@ -340,6 +342,56 @@ export default function AuditReport({ report, context }: Props) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProvenanceColumn({
+  title,
+  fallbackSig,
+  fallbackSlot,
+  provenance,
+}: {
+  title: string;
+  fallbackSig?: string;
+  fallbackSlot: number;
+  provenance?: ReportContext["versionA"];
+}) {
+  const sig = provenance?.upgradeSignature ?? fallbackSig;
+  const slot = provenance?.upgradeSlot ?? fallbackSlot;
+  return (
+    <div className="audit-version-col">
+      <h4 className="audit-version-heading">{title}</h4>
+      {sig ? <AddressField label="Upgrade signature" value={sig} kind="tx" /> : null}
+      <div className="audit-version-meta">
+        <span>Slot</span>
+        <code className="report-mono">{slot.toLocaleString("en-US")}</code>
+      </div>
+      {provenance?.bufferAddress && (
+        <AddressField label="Buffer" value={provenance.bufferAddress} />
+      )}
+      {provenance?.sha256 && (
+        <div className="audit-version-meta">
+          <span>SHA-256</span>
+          <code className="report-mono" style={{ wordBreak: "break-all" }}>
+            {provenance.sha256}
+          </code>
+        </div>
+      )}
+      {provenance?.byteLength !== undefined && (
+        <div className="audit-version-meta">
+          <span>Size</span>
+          <code className="report-mono">{provenance.byteLength.toLocaleString("en-US")} bytes</code>
+        </div>
+      )}
+      {provenance?.coverageComplete !== undefined && (
+        <div className="audit-version-meta">
+          <span>Coverage</span>
+          <code className="report-mono">
+            {provenance.coverageComplete ? "complete" : "incomplete"}
+          </code>
+        </div>
+      )}
     </div>
   );
 }
@@ -425,6 +477,16 @@ function FindingsList({
             {isExpanded && (
               <div className="audit-finding-row-body">
                 <p>{f.description}</p>
+                {(f.analyzer || f.confidence) && (
+                  <p className="audit-muted compact">
+                    {f.analyzer ? `Analyzer: ${f.analyzer}` : ""}
+                    {f.analyzer && f.confidence ? " · " : ""}
+                    {f.confidence ? `Confidence: ${f.confidence}` : ""}
+                  </p>
+                )}
+                {f.evidence?.summary && (
+                  <p className="audit-muted compact">Evidence: {f.evidence.summary}</p>
+                )}
                 {f.after && <AddressField label="Program / target" value={f.after} />}
                 <div className="audit-finding-rec compact">
                   <div className="audit-finding-rec-label">Recommendation</div>

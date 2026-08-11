@@ -12,8 +12,13 @@ export const PROGRAM_DATA_HEADER_SIZE = 45;
 export const BUFFER_HEADER_SIZE = 37;
 
 /** BPF Upgradeable Loader instruction discriminators (u32 LE). */
+export const LOADER_IX_INITIALIZE_BUFFER = 0;
 export const LOADER_IX_WRITE = 1;
+export const LOADER_IX_DEPLOY_WITH_MAX_DATA_LEN = 2;
 export const LOADER_IX_UPGRADE = 3;
+export const LOADER_IX_SET_AUTHORITY = 4;
+export const LOADER_IX_CLOSE = 5;
+export const LOADER_IX_EXTEND_PROGRAM = 6;
 
 /** Well-known programs — CPI targets outside this set are flagged. */
 export const KNOWN_PROGRAM_IDS = new Set([

@@ -1,0 +1,8 @@
+{
+  "name": "normal-ordered-writes",
+  "programId": "Prog111111111111111111111111111111111111111",
+  "programDataAddress": "Data111111111111111111111111111111111111111",
+  "bufferAddress": "Buf1111111111111111111111111111111111111111",
+  "upgradeSignature": "UpgradeSigAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "upgradeSlot": 1000
+}

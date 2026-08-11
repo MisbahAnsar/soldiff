@@ -6,9 +6,19 @@ import Navbar from "@/app/components/Navbar";
 import ReportPanel from "@/app/components/ReportPanel";
 import type { DemoProgram } from "@/app/data/demos";
 import { PROVEN_EXAMPLE } from "@/app/analyze/constants";
-import { LOADING_STAGES_UI, type ReportContext } from "@/app/lib/report-presenter";
+import {
+  LOADING_STAGES_UI,
+  type ProvenanceSummary,
+  type ReportContext,
+} from "@/app/lib/report-presenter";
 
 const LOADING_STAGES = [...LOADING_STAGES_UI];
+
+type UpgradeRow = {
+  slot: number;
+  signature: string;
+  diffable?: boolean;
+};
 
 export default function AnalyzePage() {
   const [programId, setProgramId] = useState("");
@@ -17,6 +27,11 @@ export default function AnalyzePage() {
   const [upgradeSignature, setUpgradeSignature] = useState("");
   const [prevUpgradeSlot, setPrevUpgradeSlot] = useState<number | null>(null);
   const [upgradeSlot, setUpgradeSlot] = useState<number | null>(null);
+  const [upgrades, setUpgrades] = useState<UpgradeRow[]>([]);
+  const [upgradesLoading, setUpgradesLoading] = useState(false);
+  const [upgradesError, setUpgradesError] = useState<string | null>(null);
+  const [selectedA, setSelectedA] = useState<string>("");
+  const [selectedB, setSelectedB] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(LOADING_STAGES[0]);
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
@@ -36,10 +51,60 @@ export default function AnalyzePage() {
     setLabel(PROVEN_EXAMPLE.label);
     setPrevUpgradeSignature(PROVEN_EXAMPLE.prevUpgradeSignature);
     setUpgradeSignature(PROVEN_EXAMPLE.upgradeSignature);
-    setPrevUpgradeSlot(null);
-    setUpgradeSlot(null);
+    setPrevUpgradeSlot(PROVEN_EXAMPLE.prevUpgradeSlot);
+    setUpgradeSlot(PROVEN_EXAMPLE.upgradeSlot);
+    setSelectedA(PROVEN_EXAMPLE.prevUpgradeSignature);
+    setSelectedB(PROVEN_EXAMPLE.upgradeSignature);
     setError(null);
     setAnalysisError(null);
+  };
+
+  const loadUpgradeHistory = async () => {
+    setUpgradesError(null);
+    setUpgrades([]);
+    if (!programId.trim()) {
+      setUpgradesError("Enter a Program ID first.");
+      return;
+    }
+    setUpgradesLoading(true);
+    try {
+      const res = await fetch(
+        `/api/upgrades?programId=${encodeURIComponent(programId.trim())}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load upgrades");
+      const rows = (data.upgrades as UpgradeRow[]) ?? [];
+      // API returns newest-first; keep that for display
+      setUpgrades(rows);
+      if (rows.length >= 2) {
+        // Default: older = rows[1], newer = rows[0] when newest-first
+        const newer = rows[0];
+        const older = rows[1];
+        setSelectedB(newer.signature);
+        setSelectedA(older.signature);
+        setUpgradeSignature(newer.signature);
+        setPrevUpgradeSignature(older.signature);
+        setUpgradeSlot(newer.slot);
+        setPrevUpgradeSlot(older.slot);
+      }
+    } catch (err) {
+      setUpgradesError(err instanceof Error ? err.message : "Upgrade history failed");
+    } finally {
+      setUpgradesLoading(false);
+    }
+  };
+
+  const applySelection = (which: "A" | "B", signature: string) => {
+    const row = upgrades.find((u) => u.signature === signature);
+    if (which === "A") {
+      setSelectedA(signature);
+      setPrevUpgradeSignature(signature);
+      setPrevUpgradeSlot(row?.slot ?? null);
+    } else {
+      setSelectedB(signature);
+      setUpgradeSignature(signature);
+      setUpgradeSlot(row?.slot ?? null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -101,6 +166,16 @@ export default function AnalyzePage() {
 
       setLoadingStageIndex(LOADING_STAGES.length - 1);
       setLoadingStage(LOADING_STAGES[LOADING_STAGES.length - 1]);
+
+      const prov = data.provenance as
+        | {
+            versionA?: ProvenanceSummary;
+            versionB?: ProvenanceSummary;
+            limitations?: string[];
+            framework?: string;
+          }
+        | undefined;
+
       setReportContext({
         prevUpgradeSignature: prevUpgradeSignature.trim(),
         upgradeSignature: upgradeSignature.trim(),
@@ -108,6 +183,10 @@ export default function AnalyzePage() {
         upgradeSlot,
         analysisStartedAt: startedAt,
         analysisCompletedAt: Date.now(),
+        versionA: prov?.versionA,
+        versionB: prov?.versionB,
+        limitations: prov?.limitations,
+        framework: prov?.framework,
       });
       setAnalysisError(null);
       setReport(data.report);
@@ -161,9 +240,8 @@ export default function AnalyzePage() {
                 lineHeight: 1.6,
               }}
             >
-              Enter one program ID and two BPF upgrade transaction signatures — the older version
-              (before) and the newer version (after). SolDiff reconstructs bytecode from on-chain
-              Write transactions and produces a security diff report.
+              Load upgrade history for a program, select Version A and Version B, then reconstruct
+              and compare bytecode. Artifacts are not marked verified unless independently proven.
             </p>
           </div>
 
@@ -172,9 +250,8 @@ export default function AnalyzePage() {
               <div className="analyze-tip">
                 <span className="analyze-tip-label">Tip</span>
                 <p>
-                  For the best experience, use upgradeable programs under 450,000 bytes. Larger
-                  programs require many historical Write transactions and may take much longer to
-                  process.
+                  Prefer programs with distinct buffers per upgrade and complete Write history on
+                  your RPC. Large binaries can take several minutes.
                 </p>
               </div>
 
@@ -183,11 +260,13 @@ export default function AnalyzePage() {
                 className="analyze-example-btn"
                 onClick={fillProvenExample}
               >
-                <span className="analyze-example-badge">Proven example</span>
+                <span className="analyze-example-badge">1-click example</span>
                 <span className="analyze-example-title">
-                  Solayer endoAVS — proven historical upgrade diff
+                  Solayer endoAVS — real mainnet case study pair
                 </span>
                 <span className="analyze-example-sub report-mono">
+                  slots {PROVEN_EXAMPLE.prevUpgradeSlot.toLocaleString("en-US")} →{" "}
+                  {PROVEN_EXAMPLE.upgradeSlot.toLocaleString("en-US")} ·{" "}
                   {PROVEN_EXAMPLE.programId.slice(0, 12)}…
                 </span>
               </button>
@@ -204,18 +283,6 @@ export default function AnalyzePage() {
                     style={inputStyle}
                     spellCheck={false}
                   />
-                  <p style={hintStyle}>
-                    Executable program address from{" "}
-                    <a
-                      href={PROVEN_EXAMPLE.solscanUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: "var(--accent)" }}
-                    >
-                      Solscan
-                    </a>{" "}
-                    — not ProgramData.
-                  </p>
                 </div>
                 <div>
                   <label style={labelStyle}>Label (optional)</label>
@@ -226,10 +293,82 @@ export default function AnalyzePage() {
                     style={inputStyle}
                   />
                 </div>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={loadUpgradeHistory}
+                  disabled={upgradesLoading || !programId.trim()}
+                  style={{ justifyContent: "center", marginTop: 8 }}
+                >
+                  {upgradesLoading ? "Loading history…" : "Load upgrade history"}
+                </button>
+                {upgradesError && <div className="analyze-form-error">{upgradesError}</div>}
+                {upgrades.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <label style={labelStyle}>Upgrade history (newest first)</label>
+                    <ul
+                      style={{
+                        listStyle: "none",
+                        padding: 0,
+                        margin: "8px 0 0",
+                        maxHeight: 180,
+                        overflow: "auto",
+                        border: "1px solid var(--border-strong)",
+                        borderRadius: 8,
+                      }}
+                    >
+                      {upgrades.map((u) => (
+                        <li
+                          key={u.signature}
+                          style={{
+                            padding: "8px 10px",
+                            borderBottom: "1px solid var(--border)",
+                            fontSize: 12,
+                            fontFamily: "var(--font-mono), monospace",
+                          }}
+                        >
+                          slot {u.slot.toLocaleString("en-US")} · {u.signature.slice(0, 20)}…
+                        </li>
+                      ))}
+                    </ul>
+                    <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                      <div>
+                        <label style={labelStyle}>Version A (older)</label>
+                        <select
+                          value={selectedA}
+                          onChange={(e) => applySelection("A", e.target.value)}
+                          style={inputStyle}
+                        >
+                          <option value="">Select older upgrade…</option>
+                          {upgrades.map((u) => (
+                            <option key={`a-${u.signature}`} value={u.signature}>
+                              slot {u.slot} · {u.signature.slice(0, 16)}…
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Version B (newer)</label>
+                        <select
+                          value={selectedB}
+                          onChange={(e) => applySelection("B", e.target.value)}
+                          style={inputStyle}
+                        >
+                          <option value="">Select newer upgrade…</option>
+                          {upgrades.map((u) => (
+                            <option key={`b-${u.signature}`} value={u.signature}>
+                              slot {u.slot} · {u.signature.slice(0, 16)}…
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </fieldset>
 
               <fieldset className="analyze-fieldset">
-                <legend className="analyze-legend">Version A — before upgrade</legend>
+                <legend className="analyze-legend">Version A — before</legend>
                 <div>
                   <label style={labelStyle}>Upgrade transaction signature *</label>
                   <input
@@ -237,18 +376,21 @@ export default function AnalyzePage() {
                     value={prevUpgradeSignature}
                     onChange={(e) => {
                       setPrevUpgradeSignature(e.target.value);
+                      setSelectedA(e.target.value);
                       setPrevUpgradeSlot(null);
                     }}
                     placeholder="Older BPF Upgrade tx signature"
                     style={inputStyle}
                     spellCheck={false}
                   />
-                  <p style={hintStyle}>The on-chain upgrade that deployed the prior bytecode.</p>
+                  {prevUpgradeSlot !== null && (
+                    <p style={hintStyle}>Slot {prevUpgradeSlot.toLocaleString("en-US")}</p>
+                  )}
                 </div>
               </fieldset>
 
               <fieldset className="analyze-fieldset">
-                <legend className="analyze-legend">Version B — after upgrade</legend>
+                <legend className="analyze-legend">Version B — after</legend>
                 <div>
                   <label style={labelStyle}>Upgrade transaction signature *</label>
                   <input
@@ -256,24 +398,24 @@ export default function AnalyzePage() {
                     value={upgradeSignature}
                     onChange={(e) => {
                       setUpgradeSignature(e.target.value);
+                      setSelectedB(e.target.value);
                       setUpgradeSlot(null);
                     }}
                     placeholder="Newer BPF Upgrade tx signature"
                     style={inputStyle}
                     spellCheck={false}
                   />
-                  <p style={hintStyle}>The upgrade you want to audit — compared against Version A.</p>
+                  {upgradeSlot !== null && (
+                    <p style={hintStyle}>Slot {upgradeSlot.toLocaleString("en-US")}</p>
+                  )}
                 </div>
               </fieldset>
 
-              {error && (
-                <div className="analyze-form-error">{error}</div>
-              )}
+              {error && <div className="analyze-form-error">{error}</div>}
 
               <p className="analyze-runtime-note">
-                Large programs can take 4–6 minutes to reconstruct and compare. For faster, more
-                reliable results, use programs under 450,000 bytes. Programs larger than 450,000
-                bytes may take significantly longer or exceed available memory and time limits.
+                Reconstruction requires complete buffer Write history and a bounded deployment
+                cycle. Results include full SHA-256 provenance — not verified-build attestation.
               </p>
 
               <button

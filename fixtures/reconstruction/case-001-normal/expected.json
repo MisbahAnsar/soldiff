@@ -1,0 +1,5 @@
+{
+  "coverageComplete": true,
+  "unexpectedOverlapCount": 0,
+  "notes": "Executable coverage for normal ordered writes lives in lib/soldiff/__tests__/assemble.test.ts (hash consistency + reverse-order identity)."
+}

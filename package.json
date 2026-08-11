@@ -7,7 +7,9 @@
     "dev:large": "node --max-old-space-size=8192 node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "bun test",
+    "case-study": "bun run scripts/case-study.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

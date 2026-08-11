@@ -1,4 +1,4 @@
-import type { AccountEdge, AccountNode, Severity } from "@/app/data/demos";
+import type { AccountEdge, AccountNode } from "@/app/data/demos";
 import type { FetchedBytecode } from "./rpc";
 import { KNOWN_PROGRAM_IDS } from "./constants";
 import { extractPubkeys } from "./diff";

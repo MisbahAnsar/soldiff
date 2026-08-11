@@ -1,4 +1,3 @@
-import { createHash } from "crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
 import {
   BPF_LOADER_UPGRADEABLE_PROGRAM_ID,
@@ -12,6 +11,9 @@ import {
   programAccountTypeError,
 } from "./rpc-errors";
 import { rpcGetAccountInfo } from "./rpc-executor";
+import { parseElfSections } from "./elf";
+import { sha256Hex, sha256Short } from "./hash";
+import type { ArtifactProvenance } from "./types";
 
 export interface FetchedBytecode {
   /** Slot the caller asked for (slot mode) or resolved rewind slot. */
@@ -23,11 +25,17 @@ export interface FetchedBytecode {
   elf: Buffer;
   textSection: Buffer;
   rodataSection: Buffer;
+  /** Short .text hash (16 hex) for legacy UI labels. */
   textHash: string;
+  /** Full SHA-256 digests for artifact identity. */
+  elfSha256: string;
+  textSha256: string;
+  rodataSha256: string;
   sizeBytes: number;
   /** Set when fetched via upgrade-transaction anchor. */
   anchorSignature?: string;
   anchorPosition?: "before" | "after";
+  provenance?: ArtifactProvenance;
 }
 
 interface RewindAccountValue {
@@ -41,10 +49,6 @@ interface RewindAccountResponse {
     value: RewindAccountValue | null;
   };
   error?: { code: number; message: string };
-}
-
-function hashBuffer(buf: Buffer): string {
-  return createHash("sha256").update(buf).digest("hex").slice(0, 16);
 }
 
 /** Resolve ProgramData PDA from an upgradeable program ID. */
@@ -85,6 +89,7 @@ export function elfToFetchedBytecode(params: {
   slot: number;
   requestedSlot?: number;
   anchorSignature?: string;
+  provenance?: ArtifactProvenance;
 }): FetchedBytecode {
   const { text, rodata } = parseElfSections(params.elf);
   return {
@@ -95,9 +100,13 @@ export function elfToFetchedBytecode(params: {
     elf: params.elf,
     textSection: text,
     rodataSection: rodata,
-    textHash: hashBuffer(text),
+    textHash: sha256Short(text),
+    elfSha256: sha256Hex(params.elf),
+    textSha256: sha256Hex(text),
+    rodataSha256: sha256Hex(rodata),
     sizeBytes: params.elf.length,
     anchorSignature: params.anchorSignature,
+    provenance: params.provenance,
   };
 }
 
@@ -137,7 +146,10 @@ export async function fetchBytecodeAtSlot(
     elf,
     textSection: text,
     rodataSection: rodata,
-    textHash: hashBuffer(text),
+    textHash: sha256Short(text),
+    elfSha256: sha256Hex(elf),
+    textSha256: sha256Hex(text),
+    rodataSha256: sha256Hex(rodata),
     sizeBytes: elf.length,
   };
 }
@@ -183,7 +195,10 @@ export async function fetchBytecodeAtAnchor(
     elf,
     textSection: text,
     rodataSection: rodata,
-    textHash: hashBuffer(text),
+    textHash: sha256Short(text),
+    elfSha256: sha256Hex(elf),
+    textSha256: sha256Hex(text),
+    rodataSha256: sha256Hex(rodata),
     sizeBytes: elf.length,
     anchorSignature: upgradeSignature,
     anchorPosition: position,
@@ -257,77 +272,6 @@ async function fetchHistoricalAccount(
     contextSlot: json.result?.context.slot ?? (query.type === "slot" ? query.slot : 0),
     value: json.result?.value ?? null,
   };
-}
-
-/** Minimal ELF64 parser — extracts .text and .rodata for BPF programs. */
-function parseElfSections(elf: Buffer): { text: Buffer; rodata: Buffer } {
-  if (elf.length < 64 || elf.toString("ascii", 0, 4) !== "\x7fELF") {
-    throw new Error("Invalid ELF: missing magic bytes");
-  }
-
-  const is64 = elf[4] === 2;
-  if (!is64) throw new Error("Only ELF64 supported");
-
-  const sectionHeaderOffset = Number(elf.readBigUInt64LE(40));
-  const sectionHeaderEntrySize = elf.readUInt16LE(58);
-  const sectionHeaderCount = elf.readUInt16LE(60);
-  const sectionNameStringIndex = elf.readUInt16LE(62);
-
-  if (sectionHeaderOffset === 0 || sectionHeaderCount === 0) {
-    return { text: elf, rodata: Buffer.alloc(0) };
-  }
-
-  const sections: { name: string; offset: number; size: number }[] = [];
-
-  for (let i = 0; i < sectionHeaderCount; i++) {
-    const base = sectionHeaderOffset + i * sectionHeaderEntrySize;
-    if (base + 64 > elf.length) break;
-
-    const nameOffset = elf.readUInt32LE(base);
-    const offset = Number(elf.readBigUInt64LE(base + 24));
-    const size = Number(elf.readBigUInt64LE(base + 32));
-
-    const name = readSectionName(
-      elf,
-      sectionNameStringIndex,
-      sectionHeaderOffset,
-      sectionHeaderEntrySize,
-      sectionHeaderCount,
-      nameOffset
-    );
-    sections.push({ name, offset, size });
-  }
-
-  const textSec = sections.find((s) => s.name === ".text");
-  const rodataSec = sections.find((s) => s.name === ".rodata");
-
-  const text =
-    textSec && textSec.size > 0
-      ? elf.subarray(textSec.offset, textSec.offset + textSec.size)
-      : elf;
-
-  const rodata =
-    rodataSec && rodataSec.size > 0
-      ? elf.subarray(rodataSec.offset, rodataSec.offset + rodataSec.size)
-      : Buffer.alloc(0);
-
-  return { text, rodata };
-}
-
-function readSectionName(
-  elf: Buffer,
-  shstrndx: number,
-  shoff: number,
-  shentsize: number,
-  shnum: number,
-  nameOffset: number
-): string {
-  if (shstrndx >= shnum) return "";
-  const strBase = shoff + shstrndx * shentsize;
-  const strOffset = Number(elf.readBigUInt64LE(strBase + 24));
-  let end = strOffset;
-  while (end < elf.length && elf[end] !== 0) end++;
-  return elf.toString("utf8", strOffset, end);
 }
 
 export function createConnection(): Connection {

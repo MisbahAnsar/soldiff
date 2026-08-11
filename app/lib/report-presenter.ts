@@ -1,5 +1,19 @@
 import type { DemoProgram, Finding, Severity } from "@/app/data/demos";
 
+export interface ProvenanceSummary {
+  upgradeSignature?: string;
+  upgradeSlot?: number;
+  bufferAddress?: string;
+  sha256?: string;
+  textSha256?: string;
+  rodataSha256?: string;
+  byteLength?: number;
+  writeTransactionCount?: number;
+  coverageComplete?: boolean;
+  reconstructionMethod?: string;
+  reconstructionWarnings?: string[];
+}
+
 export interface ReportContext {
   prevUpgradeSignature?: string;
   upgradeSignature?: string;
@@ -7,6 +21,10 @@ export interface ReportContext {
   upgradeSlot?: number | null;
   analysisStartedAt?: number;
   analysisCompletedAt?: number;
+  versionA?: ProvenanceSummary;
+  versionB?: ProvenanceSummary;
+  limitations?: string[];
+  framework?: string;
 }
 
 export interface FindingPresentation {
@@ -16,16 +34,27 @@ export interface FindingPresentation {
 
 const FINDING_PRESENTATION: Record<string, FindingPresentation> = {
   BYTECODE_CHANGED: { icon: "🔴", title: "Bytecode Changed" },
+  TEXT_BYTES_CHANGED: { icon: "🔴", title: ".text Bytes Changed" },
   TEXT_SECTION_SIZE_CHANGE: { icon: "🟠", title: "Code Section Resized" },
-  NEW_EXTERNAL_PROGRAM: { icon: "⚠️", title: "New External Program" },
+  CODE_UNCHANGED_DATA_CHANGED: { icon: "🟡", title: "Code Unchanged · Data Changed" },
+  NEW_32_BYTE_PUBLIC_KEY_CANDIDATE: {
+    icon: "•",
+    title: "New 32-byte Public Key Candidate",
+  },
+  NEW_EXTERNAL_PROGRAM: { icon: "⚠️", title: "New External Program (legacy demo)" },
   NEW_RODATA_STRINGS: { icon: "🟡", title: "New Read-Only Data" },
   REMOVED_RODATA_STRINGS: { icon: "🟡", title: "Removed Read-Only Data" },
-  LOGIC_CHANGE: { icon: "🔵", title: "Logic Change Detected" },
+  LARGE_TEXT_REGION_CHANGED: { icon: "🔵", title: "Large .text Region Changed" },
+  LOGIC_CHANGE: { icon: "🔵", title: "Logic Change (legacy demo)" },
+  SBF_INSTRUCTION_DIFF: { icon: "🔵", title: "SBF Instruction Diff" },
+  HISTORICAL_IDL_UNAVAILABLE: { icon: "•", title: "Historical IDL Unavailable" },
+  IDL_UNCHANGED: { icon: "✓", title: "IDL Unchanged" },
   NO_CHANGE: { icon: "✓", title: "No Bytecode Changes" },
   REMOVED_SIGNER_CHECK: { icon: "🔴", title: "Removed Signer Check" },
   NEW_INVOKE_SIGNED_TARGET: { icon: "🔴", title: "New Invoke Signed Target" },
   CHANGED_AUTHORITY_FIELD: { icon: "🔴", title: "Authority Field Changed" },
   DISCRIMINATOR_CHANGE: { icon: "🟠", title: "Discriminator Changed" },
+  IDL_DISCRIMINATOR_CHANGE: { icon: "🟠", title: "IDL Discriminator Changed" },
   NEW_MUTABLE_ACCOUNT: { icon: "🟠", title: "New Mutable Account" },
   REMOVED_OWNER_CHECK: { icon: "🟠", title: "Removed Owner Check" },
   ADDED_CLOSE_ACCOUNT: { icon: "🟡", title: "Close Account Added" },
@@ -157,16 +186,17 @@ export function executiveBullets(report: DemoProgram): string[] {
   const rodataChanged = report.accountDiff.some(
     (l) => l.type === "added" || l.type === "removed"
   );
-  const newExternal = report.summary.newCpiTargets;
-
-  bullets.push(textChanged ? "✓ Bytecode modified" : "✓ No .text changes");
-  bullets.push(
-    newExternal > 0
-      ? `✓ ${newExternal} new external program reference${newExternal > 1 ? "s" : ""}`
-      : "✓ No new external program references"
-  );
+  bullets.push(textChanged ? "✓ .text bytes modified" : "✓ No .text changes");
   bullets.push(rodataChanged ? "✓ .rodata modified" : "✓ No .rodata changes");
-  bullets.push(`✓ Blast radius: ${report.blastNodes.filter((n) => n.changed).length}`);
+  if (textChanged && !rodataChanged) {
+    bullets.push("✓ Code changed; data unchanged");
+  } else if (!textChanged && rodataChanged) {
+    bullets.push("✓ Code unchanged; data changed");
+  }
+  bullets.push(
+    `✓ Pubkey candidates flagged: ${report.summary.accountsAffected} (not proven CPI targets)`
+  );
+  bullets.push(`✓ Blast radius (synthetic): ${report.blastNodes.filter((n) => n.changed).length}`);
 
   return bullets;
 }
@@ -183,8 +213,8 @@ export function severityLabel(sev: Severity): string {
 }
 
 export const LOADING_STAGES_UI = [
-  "Finding ProgramData…",
-  "Finding Write Transactions…",
+  "Parsing upgrade transactions…",
+  "Collecting buffer Write history…",
   "Reconstructing Version A…",
   "Reconstructing Version B…",
   "Computing Diff…",

@@ -16,6 +16,18 @@ export interface Finding {
   recommendation: string;
   before?: string;
   after?: string;
+  /** Present on live pipeline findings; absent on static demos. */
+  analyzer?: string;
+  confidence?: "high" | "medium" | "low" | "unknown";
+  evidence?: {
+    summary: string;
+    details?: Record<string, unknown>;
+    before?: unknown;
+    after?: unknown;
+    offsets?: number[];
+    hashes?: Record<string, string>;
+  };
+  affectedVersions?: ("A" | "B")[];
 }
 
 export interface AccountNode {

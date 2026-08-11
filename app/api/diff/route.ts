@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { runDiffPipeline } from "@/lib/soldiff/pipeline";
+import { runAnalysisPipeline, toDemoProgram } from "@/lib/soldiff/pipeline";
+import type { ProvenanceSummary } from "@/app/lib/report-presenter";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -14,6 +15,39 @@ interface DiffRequestBody {
   upgradeSlot?: number;
   prevUpgradeSlot?: number;
   label?: string;
+}
+
+function provenanceSummary(
+  v: {
+    provenance: {
+      upgradeSignature?: string;
+      upgradeSlot?: number;
+      bufferAddress?: string;
+      sha256: string;
+      textSha256: string;
+      rodataSha256: string;
+      byteLength: number;
+      writeTransactionCount: number;
+      coverageComplete: boolean;
+      reconstructionMethod: string;
+      reconstructionWarnings: string[];
+    };
+  }
+): ProvenanceSummary {
+  const p = v.provenance;
+  return {
+    upgradeSignature: p.upgradeSignature,
+    upgradeSlot: p.upgradeSlot,
+    bufferAddress: p.bufferAddress,
+    sha256: p.sha256,
+    textSha256: p.textSha256,
+    rodataSha256: p.rodataSha256,
+    byteLength: p.byteLength,
+    writeTransactionCount: p.writeTransactionCount,
+    coverageComplete: p.coverageComplete,
+    reconstructionMethod: p.reconstructionMethod,
+    reconstructionWarnings: p.reconstructionWarnings,
+  };
 }
 
 export async function POST(request: Request) {
@@ -36,53 +70,71 @@ export async function POST(request: Request) {
 
     const upgradeSignature = body.upgradeSignature?.trim();
 
-    if (upgradeSignature) {
-      const prevUpgradeSignature = body.prevUpgradeSignature?.trim();
-      if (!prevUpgradeSignature) {
-        return NextResponse.json(
-          {
-            error:
-              "prevUpgradeSignature is required — provide the older BPF Upgrade tx (Version A).",
-          },
-          { status: 400 }
-        );
-      }
+    const analysis = upgradeSignature
+      ? await (async () => {
+          const prevUpgradeSignature = body.prevUpgradeSignature?.trim();
+          if (!prevUpgradeSignature) {
+            throw Object.assign(
+              new Error(
+                "prevUpgradeSignature is required — provide the older BPF Upgrade tx (Version A)."
+              ),
+              { status: 400 }
+            );
+          }
+          return runAnalysisPipeline({
+            programId,
+            upgradeSignature,
+            prevUpgradeSignature,
+            upgradeSlot: body.upgradeSlot,
+            prevUpgradeSlot: body.prevUpgradeSlot,
+            label: body.label,
+          });
+        })()
+      : await (async () => {
+          const fromSlot = Number(body.fromSlot);
+          const toSlot = Number(body.toSlot);
 
-      const report = await runDiffPipeline({
-        programId,
-        upgradeSignature,
-        prevUpgradeSignature,
-        upgradeSlot: body.upgradeSlot,
-        prevUpgradeSlot: body.prevUpgradeSlot,
-        label: body.label,
-      });
-      return NextResponse.json({ report });
-    }
+          if (!Number.isFinite(fromSlot) || fromSlot < 0) {
+            throw Object.assign(new Error("fromSlot must be a positive number"), {
+              status: 400,
+            });
+          }
+          if (!Number.isFinite(toSlot) || toSlot < 0) {
+            throw Object.assign(new Error("toSlot must be a positive number"), {
+              status: 400,
+            });
+          }
+          if (fromSlot >= toSlot) {
+            throw Object.assign(new Error("fromSlot must be less than toSlot"), {
+              status: 400,
+            });
+          }
 
-    const fromSlot = Number(body.fromSlot);
-    const toSlot = Number(body.toSlot);
+          return runAnalysisPipeline({
+            programId,
+            fromSlot,
+            toSlot,
+            label: body.label,
+          });
+        })();
 
-    if (!Number.isFinite(fromSlot) || fromSlot < 0) {
-      return NextResponse.json({ error: "fromSlot must be a positive number" }, { status: 400 });
-    }
+    const report = toDemoProgram(analysis);
 
-    if (!Number.isFinite(toSlot) || toSlot < 0) {
-      return NextResponse.json({ error: "toSlot must be a positive number" }, { status: 400 });
-    }
-
-    if (fromSlot >= toSlot) {
-      return NextResponse.json({ error: "fromSlot must be less than toSlot" }, { status: 400 });
-    }
-
-    const report = await runDiffPipeline({
-      programId,
-      fromSlot,
-      toSlot,
-      label: body.label,
+    return NextResponse.json({
+      report,
+      provenance: {
+        versionA: provenanceSummary(analysis.versionA),
+        versionB: provenanceSummary(analysis.versionB),
+        framework: analysis.program.framework,
+        limitations: analysis.limitations,
+        programDataAddress: analysis.program.programDataAddress,
+      },
     });
-
-    return NextResponse.json({ report });
   } catch (err) {
+    const status =
+      err && typeof err === "object" && "status" in err && typeof (err as { status: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : 500;
     let message = err instanceof Error ? err.message : "Diff pipeline failed";
     if (/heap out of memory|allocation failed/i.test(message)) {
       message =
@@ -90,6 +142,6 @@ export async function POST(request: Request) {
         "retry with NODE_OPTIONS=--max-old-space-size=8192 or use the optimized diff path (already enabled for large programs).";
     }
     console.error("[/api/diff]", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status });
   }
 }

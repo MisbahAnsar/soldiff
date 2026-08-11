@@ -1,9 +1,19 @@
+/**
+ * One-click analyze example — Solayer endoAVS pair from the real mainnet case study
+ * (case-study/solayer-endoavs-285208450-302204161). Verified reconstructable via
+ * buffer Write replay with coverageComplete=true for both versions.
+ */
 export const PROVEN_EXAMPLE = {
-  label: "Solayer endoAVS Program",
+  label: "Solayer endoAVS",
   programId: "endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
-  solscanUrl: "https://solscan.io/account/endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
+  solscanUrl:
+    "https://solscan.io/account/endoLNCKTqDn8gSVnN2hDdpgACUPWHZTwoYnnMybpAT",
+  /** Version A — older upgrade */
   prevUpgradeSignature:
-    "5BzTSCsM5PLEx2zcucUHS14Xo2yQa112UN8D6C4s38j25nHA4FWnLSQsGQyVnJFy8qFXas7UF9qGxN13DSkg7tFq",
+    "5tE2GLnw9aLSEgbp5wZ7pHRJZYPtoRK9M7KY79eMXzbiE6Ziq4iqJtVvGfH9cUorkXfa9Bx3HYs5mXrUrYtJWkZ7",
+  prevUpgradeSlot: 285_208_450,
+  /** Version B — newer upgrade */
   upgradeSignature:
-    "2b6hpipHgNsF24b5Sb2wUHNtbMhdVPNMhvL73ANxdPmQb14MJjQWJpym9gawYDtfSup2LfJ45iEX86c1WgsfXU3s",
+    "2AC3FzTyMRr9AkNwPRfmYKPDwcXkSnbuD2w4GhagyuNDHfSc95aiAneSNnddwZbdiKgCrdNnarCr9YgDpR7cbXvD",
+  upgradeSlot: 302_204_161,
 } as const;

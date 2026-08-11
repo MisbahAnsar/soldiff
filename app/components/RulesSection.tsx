@@ -1,11 +1,12 @@
 "use client";
 
-type Sev = "CRITICAL" | "HIGH" | "MEDIUM" | "INFO";
+type Sev = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
 const SEV_STYLES: Record<Sev, { color: string; soft: string; border: string; mark: string }> = {
   CRITICAL: { color: "var(--sev-critical)", soft: "var(--sev-critical-soft)", border: "var(--sev-critical-border)", mark: "C" },
   HIGH:     { color: "var(--sev-high)",     soft: "var(--sev-high-soft)",     border: "var(--sev-high-border)",     mark: "H" },
   MEDIUM:   { color: "var(--sev-medium)",   soft: "var(--sev-medium-soft)",   border: "var(--sev-medium-border)",   mark: "M" },
+  LOW:      { color: "var(--sev-info)",     soft: "var(--sev-info-soft)",     border: "var(--sev-info-border)",     mark: "L" },
   INFO:     { color: "var(--sev-info)",     soft: "var(--sev-info-soft)",     border: "var(--sev-info-border)",     mark: "I" },
 };
 
@@ -59,16 +60,18 @@ const RULES: { code: string; severity: Sev; description: string; example: string
     example: "deposit: seeds [\"v1\", user] → [\"v2\", user]",
   },
   {
-    code: "NEW_EXTERNAL_PROGRAM",
-    severity: "MEDIUM",
-    description: "A new CPI target that is not a well-known Solana program (Token, System, etc.) was added to the program graph.",
-    example: "route: new CPI → unknown_aggregator_program",
+    code: "NEW_32_BYTE_PUBLIC_KEY_CANDIDATE",
+    severity: "LOW",
+    description:
+      "Live pipeline: a sampled 32-byte window decodes as a public key. Hypothesis only — not a proven CPI target.",
+    example: "sampled bytes → candidate pubkey (confidence=low)",
   },
   {
-    code: "LOGIC_CHANGE",
+    code: "LARGE_TEXT_REGION_CHANGED",
     severity: "INFO",
-    description: "General business logic modification detected in the instruction body. No structural security regressions identified.",
-    example: "route_exact_in: fee_bps 30 → 25",
+    description:
+      "Live pipeline: many aligned .text chunks differ. Measures raw churn, not proven semantic logic change.",
+    example: ".text: 48 chunks differ",
   },
 ];
 
@@ -79,7 +82,7 @@ export default function RulesSection() {
         {/* Header */}
         <div style={{ marginBottom: 48, maxWidth: 720 }}>
           <div style={{ marginBottom: 20 }}>
-            <span className="eyebrow">Rule engine</span>
+            <span className="eyebrow">Rule catalog (mixed live + aspirational)</span>
           </div>
           <h2
             style={{

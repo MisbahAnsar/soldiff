@@ -1,9 +1,9 @@
-import type { Finding, Severity } from "@/app/data/demos";
+import type { Finding, Severity } from "./types";
 import type { FetchedBytecode } from "./rpc";
 import { KNOWN_PROGRAM_IDS } from "./constants";
 import { extractPubkeys, extractStrings } from "./diff";
 
-interface RuleContext {
+export interface RuleContext {
   oldBin: FetchedBytecode;
   newBin: FetchedBytecode;
   changedChunks: number;
@@ -18,100 +18,212 @@ export function runRules(ctx: RuleContext): Finding[] {
   let id = 0;
   const nextId = () => `f${++id}`;
 
+  const textUnchanged = ctx.oldBin.textHash === ctx.newBin.textHash;
+  const rodataUnchanged = ctx.oldBin.rodataSection.equals(ctx.newBin.rodataSection);
+
   const sizeDelta = ctx.newBin.textSection.length - ctx.oldBin.textSection.length;
   const sizePct =
     ctx.oldBin.textSection.length > 0
       ? Math.abs(sizeDelta) / ctx.oldBin.textSection.length
       : 1;
 
-  if (ctx.oldBin.textHash === ctx.newBin.textHash) {
+  if (textUnchanged && rodataUnchanged) {
     findings.push({
       id: nextId(),
+      analyzer: "raw-byte",
       severity: "INFO",
+      confidence: "high",
       code: "NO_CHANGE",
       instruction: "program",
-      description: ".text section hash is identical between the two slots. No bytecode changes detected.",
-      recommendation: "No upgrade occurred between these slots, or both snapshots point to the same deployment.",
+      description:
+        ".text and .rodata are identical between the two versions. No bytecode or read-only data changes detected.",
+      recommendation:
+        "No upgrade bytecode diff is required for these reconstructed artifacts.",
+      evidence: {
+        summary: "text and rodata unchanged",
+        hashes: {
+          textA: ctx.oldBin.textHash,
+          textB: ctx.newBin.textHash,
+        },
+      },
     });
     return findings;
   }
 
-  findings.push({
-    id: nextId(),
-    severity: "INFO",
-    code: "BYTECODE_CHANGED",
-    instruction: "program",
-    description: `.text section changed between slot ${ctx.oldBin.slot} and ${ctx.newBin.slot}. ` +
-      `Hash ${ctx.oldBin.textHash} → ${ctx.newBin.textHash}.`,
-    recommendation: "Review the structural diff and all findings before approving any governance vote.",
-    before: `sha256:${ctx.oldBin.textHash} (${ctx.oldBin.textSection.length} bytes)`,
-    after: `sha256:${ctx.newBin.textHash} (${ctx.newBin.textSection.length} bytes)`,
-  });
-
-  if (sizePct > 0.15) {
+  if (textUnchanged && !rodataUnchanged) {
     findings.push({
       id: nextId(),
-      severity: sizePct > 0.4 ? "HIGH" : "MEDIUM",
-      code: "TEXT_SECTION_SIZE_CHANGE",
-      instruction: "program",
-      description: `.text section size changed by ${sizeDelta > 0 ? "+" : ""}${sizeDelta} bytes (${(sizePct * 100).toFixed(1)}%). Large size swings often indicate new instruction handlers or removed checks.`,
-      recommendation: "Inspect added/removed bytecode regions in the instruction diff tab.",
-      before: `${ctx.oldBin.textSection.length} bytes`,
-      after: `${ctx.newBin.textSection.length} bytes`,
+      analyzer: "raw-byte",
+      severity: "INFO",
+      confidence: "high",
+      code: "CODE_UNCHANGED_DATA_CHANGED",
+      instruction: "rodata",
+      description:
+        ".text is identical but .rodata changed. Code bytes are unchanged; read-only data differs.",
+      recommendation:
+        "Review .rodata diffs for constant, string, or embedded data changes. Do not treat this as NO_CHANGE.",
+      evidence: {
+        summary: "code unchanged, data changed",
+        hashes: {
+          textA: ctx.oldBin.textHash,
+          textB: ctx.newBin.textHash,
+        },
+        before: `${ctx.oldBin.rodataSection.length} rodata bytes`,
+        after: `${ctx.newBin.rodataSection.length} rodata bytes`,
+      },
     });
   }
 
-  // New external program references embedded in bytecode
+  if (!textUnchanged) {
+    findings.push({
+      id: nextId(),
+      analyzer: "raw-byte",
+      severity: "INFO",
+      confidence: "high",
+      code: "TEXT_BYTES_CHANGED",
+      instruction: "program",
+      description:
+        `.text section bytes changed between slot ${ctx.oldBin.slot} and ${ctx.newBin.slot}. ` +
+        `Hash ${ctx.oldBin.textHash} → ${ctx.newBin.textHash}.`,
+      recommendation:
+        "Review the raw byte diff and SBF instruction-level diff. Byte changes do not by themselves prove semantic logic changes.",
+      before: `sha256:${ctx.oldBin.textHash} (${ctx.oldBin.textSection.length} bytes)`,
+      after: `sha256:${ctx.newBin.textHash} (${ctx.newBin.textSection.length} bytes)`,
+      evidence: {
+        summary: ".text bytes differ",
+        hashes: {
+          textA: ctx.oldBin.textHash,
+          textB: ctx.newBin.textHash,
+        },
+      },
+    });
+
+    // Keep BYTECODE_CHANGED as alias for UI presenters that still look for it
+    findings.push({
+      id: nextId(),
+      analyzer: "raw-byte",
+      severity: "INFO",
+      confidence: "high",
+      code: "BYTECODE_CHANGED",
+      instruction: "program",
+      description: `.text section hash changed (${ctx.oldBin.textHash} → ${ctx.newBin.textHash}).`,
+      evidence: {
+        summary: "bytecode hash changed",
+        hashes: { before: ctx.oldBin.textHash, after: ctx.newBin.textHash },
+      },
+    });
+  }
+
+  if (!textUnchanged && sizePct > 0.15) {
+    findings.push({
+      id: nextId(),
+      analyzer: "raw-byte",
+      severity: sizePct > 0.4 ? "HIGH" : "MEDIUM",
+      confidence: "medium",
+      code: "TEXT_SECTION_SIZE_CHANGE",
+      instruction: "program",
+      description: `.text section size changed by ${sizeDelta > 0 ? "+" : ""}${sizeDelta} bytes (${(sizePct * 100).toFixed(1)}%).`,
+      recommendation: "Inspect added/removed bytecode regions in the raw and instruction diffs.",
+      before: `${ctx.oldBin.textSection.length} bytes`,
+      after: `${ctx.newBin.textSection.length} bytes`,
+      evidence: {
+        summary: ".text size change",
+        before: ctx.oldBin.textSection.length,
+        after: ctx.newBin.textSection.length,
+      },
+    });
+  }
+
+  // Sampled 32-byte windows that decode as pubkeys — candidates only, not proven CPI targets
   const newExternal = [...ctx.newPubkeys].filter(
     (k) => !ctx.oldPubkeys.has(k) && !KNOWN_PROGRAM_IDS.has(k)
   );
   for (const pubkey of newExternal.slice(0, 3)) {
     findings.push({
       id: nextId(),
-      severity: "CRITICAL",
-      code: "NEW_EXTERNAL_PROGRAM",
-      instruction: "cpi_target",
-      description: `A new program public key appeared in the upgraded bytecode: ${pubkey}. This may be a new CPI target invoked via invoke_signed.`,
-      recommendation: "Verify this program ID is audited and intentional. Unknown CPI targets are a common exploit vector.",
+      analyzer: "raw-byte",
+      severity: "LOW",
+      confidence: "low",
+      code: "NEW_32_BYTE_PUBLIC_KEY_CANDIDATE",
+      instruction: "sampled_bytes",
+      description:
+        `A new 32-byte value that decodes as a Solana public key appeared in sampled bytecode bytes: ${pubkey}. ` +
+        `This is not proof of a new external program or CPI target.`,
+      recommendation:
+        "Treat as a hypothesis until confirmed by instruction/CPI evidence or a known program account lookup.",
       after: pubkey,
+      evidence: {
+        summary: "sampled pubkey candidate",
+        after: pubkey,
+        details: {
+          proof: "none",
+          method: "aligned-32-byte-window-sample",
+        },
+      },
     });
   }
 
-  // New strings in rodata (instruction names, error messages)
   const newStrings = [...ctx.newStrings].filter((s) => !ctx.oldStrings.has(s) && s.length >= 6);
-  const removedStrings = [...ctx.oldStrings].filter((s) => !ctx.newStrings.has(s) && s.length >= 6);
+  const removedStrings = [...ctx.oldStrings].filter(
+    (s) => !ctx.newStrings.has(s) && s.length >= 6
+  );
 
   if (newStrings.length > 0) {
     findings.push({
       id: nextId(),
+      analyzer: "raw-byte",
       severity: newStrings.length > 5 ? "MEDIUM" : "LOW",
+      confidence: "medium",
       code: "NEW_RODATA_STRINGS",
       instruction: "rodata",
-      description: `${newStrings.length} new string(s) in .rodata: ${newStrings.slice(0, 3).map((s) => `"${s}"`).join(", ")}${newStrings.length > 3 ? "…" : ""}.`,
-      recommendation: "New strings may indicate new instruction handlers or error paths.",
+      description: `${newStrings.length} new string(s) in .rodata: ${newStrings
+        .slice(0, 3)
+        .map((s) => `"${s}"`)
+        .join(", ")}${newStrings.length > 3 ? "…" : ""}.`,
+      recommendation: "New strings may indicate new handlers or error paths — confirm manually.",
+      evidence: {
+        summary: "new rodata strings",
+        after: newStrings.slice(0, 10),
+      },
     });
   }
 
   if (removedStrings.length > 0) {
     findings.push({
       id: nextId(),
+      analyzer: "raw-byte",
       severity: "MEDIUM",
+      confidence: "medium",
       code: "REMOVED_RODATA_STRINGS",
       instruction: "rodata",
-      description: `${removedStrings.length} string(s) removed from .rodata, including: ${removedStrings.slice(0, 2).map((s) => `"${s}"`).join(", ")}.`,
-      recommendation: "Removed strings may indicate deleted instruction handlers or constraint checks.",
+      description: `${removedStrings.length} string(s) removed from .rodata, including: ${removedStrings
+        .slice(0, 2)
+        .map((s) => `"${s}"`)
+        .join(", ")}.`,
+      recommendation: "Removed strings may indicate deleted paths — confirm manually.",
       before: removedStrings.slice(0, 2).join(", "),
+      evidence: {
+        summary: "removed rodata strings",
+        before: removedStrings.slice(0, 10),
+      },
     });
   }
 
-  if (ctx.changedChunks > 20) {
+  if (!textUnchanged && ctx.changedChunks > 20) {
     findings.push({
       id: nextId(),
+      analyzer: "raw-byte",
       severity: ctx.changedChunks > 80 ? "HIGH" : "MEDIUM",
-      code: "LOGIC_CHANGE",
+      confidence: "medium",
+      code: "LARGE_TEXT_REGION_CHANGED",
       instruction: "program",
-      description: `${ctx.changedChunks} bytecode chunks differ in .text. Broad logic changes detected across the program.`,
-      recommendation: "Treat as a major upgrade. Run full manual audit if CRITICAL rules fired.",
+      description: `${ctx.changedChunks} aligned 32-byte chunks differ in .text. This measures raw region churn, not proven semantic logic changes.`,
+      recommendation:
+        "Use the SBF instruction-level diff for finer evidence. Do not equate chunk count with logic change.",
+      evidence: {
+        summary: "large .text region churn",
+        details: { changedChunks: ctx.changedChunks },
+      },
     });
   }
 
@@ -166,19 +278,33 @@ export function summarizeFindings(findings: Finding[]) {
 
   for (const f of findings) {
     switch (f.severity) {
-      case "CRITICAL": summary.critical++; break;
-      case "HIGH": summary.high++; break;
-      case "MEDIUM": summary.medium++; break;
-      case "LOW": summary.low++; break;
-      case "INFO": summary.info++; break;
+      case "CRITICAL":
+        summary.critical++;
+        break;
+      case "HIGH":
+        summary.high++;
+        break;
+      case "MEDIUM":
+        summary.medium++;
+        break;
+      case "LOW":
+        summary.low++;
+        break;
+      case "INFO":
+        summary.info++;
+        break;
     }
-    if (f.code === "LOGIC_CHANGE" || f.code === "BYTECODE_CHANGED") {
+    if (
+      f.code === "TEXT_BYTES_CHANGED" ||
+      f.code === "BYTECODE_CHANGED" ||
+      f.code === "LARGE_TEXT_REGION_CHANGED"
+    ) {
       summary.instructionsChanged++;
     }
-    if (f.code === "NEW_EXTERNAL_PROGRAM") {
-      summary.newCpiTargets++;
+    if (f.code === "NEW_32_BYTE_PUBLIC_KEY_CANDIDATE") {
       summary.accountsAffected++;
     }
+    // newCpiTargets only when proven — candidates do not increment
   }
 
   return summary;
