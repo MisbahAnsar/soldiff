@@ -1,7 +1,6 @@
 /**
- * One-click analyze example — Solayer endoAVS pair from the real mainnet case study
- * (case-study/solayer-endoavs-285208450-302204161). Verified reconstructable via
- * buffer Write replay with coverageComplete=true for both versions.
+ * One-click analyze example — Solayer endoAVS pair documented in root `report.md`.
+ * Reconstructable via buffer Write replay with coverageComplete=true for both versions.
  */
 export const PROVEN_EXAMPLE = {
   label: "Solayer endoAVS",

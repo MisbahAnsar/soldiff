@@ -40,13 +40,11 @@ export default function BlastRadius({ nodes, edges, compact = false, audit = fal
 
   return (
     <div>
-      {!audit && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: compact ? 8 : 16, flexWrap: "wrap" }}>
-          <span style={{ fontSize: compact ? 11.5 : 13, fontWeight: 600, color: "var(--text-primary)" }}>
-            Account dependency graph
-          </span>
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: compact ? 8 : 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: compact ? 11.5 : 13, fontWeight: 600, color: "var(--text-primary)" }}>
+          Synthetic blast-radius visualization — not an on-chain dependency graph
+        </span>
+      </div>
 
       <div className="blast-legend">
         {Object.entries(NODE_TYPE_CONFIG).map(([key, cfg]) => (

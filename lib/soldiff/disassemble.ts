@@ -1,7 +1,7 @@
 /**
  * SBF instruction decode using the published eBPF/SBF 64-bit instruction format.
  *
- * Choice rationale (see docs/disassembly.md):
+ * Choice rationale:
  * - No maintained pure-JS Solana disassembler npm package exists for server use.
  * - `sbpf-disassembler` (Rust/WASM) and `llvm-objdump` are preferred when available
  *   via SOLDIFF_DISASSEMBLER / PATH, but are optional external tools.
@@ -24,6 +24,7 @@ import type {
   InstructionDiffEntry,
   NormalizedInstruction,
 } from "./types";
+import { alignSequences, instructionFingerprint } from "./sequence-diff";
 
 const execFileAsync = promisify(execFile);
 
@@ -196,7 +197,7 @@ function className(cls: number): string {
 }
 
 /**
- * Normalization rules (deterministic; see docs/disassembly.md):
+ * Normalization rules (deterministic):
  * 1. Keep byte offset, opcode mnemonic, operand list.
  * 2. Drop raw hex (unstable for presentation only).
  * 3. Normalize whitespace; operands already structured.
@@ -307,48 +308,61 @@ export async function disassembleArtifact(
 }
 
 /**
- * Offset-aligned instruction diff. Insertions shift subsequent offsets;
- * we match by offset identity first, then report replacements at shared offsets.
+ * Sequence-aligned instruction diff on normalized fingerprints (opcode+operands).
+ * Insertions/deletions do not force later instructions into "replaced" merely because
+ * their byte offsets shifted. Matched identical fingerprints at different offsets
+ * count as unchanged + repositioned.
  */
 export function diffNormalizedInstructions(
   a: NormalizedInstruction[],
   b: NormalizedInstruction[]
 ): DisassemblyDiffResult {
-  const mapA = new Map(a.map((ix) => [ix.offset, ix]));
-  const mapB = new Map(b.map((ix) => [ix.offset, ix]));
-  const offsets = [...new Set([...mapA.keys(), ...mapB.keys()])].sort((x, y) => x - y);
+  const keysA = a.map((ix) => instructionFingerprint(ix.opcode, ix.operands));
+  const keysB = b.map((ix) => instructionFingerprint(ix.opcode, ix.operands));
+  const ops = alignSequences(keysA, keysB);
 
   const entries: InstructionDiffEntry[] = [];
   let added = 0;
   let removed = 0;
   let replaced = 0;
   let unchanged = 0;
+  let repositioned = 0;
 
-  for (const off of offsets) {
-    const left = mapA.get(off);
-    const right = mapB.get(off);
-    if (left && right) {
-      const same =
-        left.opcode === right.opcode &&
-        left.operands.length === right.operands.length &&
-        left.operands.every((o, i) => o === right.operands[i]);
-      if (same) {
-        unchanged++;
-        entries.push({ kind: "unchanged", offsetA: off, offsetB: off, before: left, after: right });
-      } else {
-        replaced++;
-        entries.push({ kind: "replaced", offsetA: off, offsetB: off, before: left, after: right });
-      }
-    } else if (right) {
+  for (const op of ops) {
+    if (op.type === "equal") {
+      const left = a[op.aIndex];
+      const right = b[op.bIndex];
+      unchanged++;
+      if (left.offset !== right.offset) repositioned++;
+      entries.push({
+        kind: "unchanged",
+        offsetA: left.offset,
+        offsetB: right.offset,
+        before: left,
+        after: right,
+      });
+    } else if (op.type === "insert") {
+      const right = b[op.bIndex];
       added++;
-      entries.push({ kind: "added", offsetB: off, after: right });
-    } else if (left) {
+      entries.push({ kind: "added", offsetB: right.offset, after: right });
+    } else if (op.type === "delete") {
+      const left = a[op.aIndex];
       removed++;
-      entries.push({ kind: "removed", offsetA: off, before: left });
+      entries.push({ kind: "removed", offsetA: left.offset, before: left });
+    } else {
+      const left = a[op.aIndex];
+      const right = b[op.bIndex];
+      replaced++;
+      entries.push({
+        kind: "replaced",
+        offsetA: left.offset,
+        offsetB: right.offset,
+        before: left,
+        after: right,
+      });
     }
   }
 
-  // Heuristic: contiguous replaced/added/removed runs count as function-region changes
   let functionRegionsChanged = 0;
   let inRun = false;
   for (const e of entries) {
@@ -364,11 +378,13 @@ export function diffNormalizedInstructions(
 
   return {
     analyzer: "sbf-instruction",
+    methodology: "sequence-alignment",
     available: true,
     added,
     removed,
     replaced,
     unchanged,
+    repositioned,
     entries: entries.filter((e) => e.kind !== "unchanged").slice(0, 500),
     functionRegionsChanged,
   };

@@ -111,10 +111,14 @@ export function renderMarkdownReport(report: AnalysisReport): string {
   if (!dis.available) {
     lines.push(`Unavailable: ${dis.reason ?? "unknown"}`);
   } else {
+    lines.push(`- Methodology: **${dis.methodology ?? "sequence-alignment"}** (fingerprint sequence alignment)`);
     lines.push(
-      `- Added: ${dis.added}, Removed: ${dis.removed}, Replaced: ${dis.replaced}, Unchanged: ${dis.unchanged}`
+      `- Added: ${dis.added}, Removed: ${dis.removed}, Replaced: ${dis.replaced}, Unchanged: ${dis.unchanged}, Repositioned: ${dis.repositioned ?? 0}`
     );
     lines.push(`- Changed regions: ${dis.functionRegionsChanged}`);
+    lines.push(
+      "- Repositioned = identical instruction fingerprints matched at different byte offsets (not semantic change by itself)."
+    );
     lines.push("");
     lines.push("Sample (up to 20 changed instructions):");
     lines.push("");

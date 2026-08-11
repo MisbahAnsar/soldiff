@@ -19,7 +19,7 @@ const STEPS = [
     number: "03",
     title: "Raw byte + SBF instruction diff",
     description:
-      "`.text` and `.rodata` are compared at the byte-chunk layer. An SBF instruction-level decoder adds offset-aligned instruction evidence. This is not a semantic decompiler.",
+      "`.text` and `.rodata` are compared at the byte-chunk layer. An SBF instruction-level decoder adds sequence-aligned instruction evidence. This is not a semantic decompiler.",
     detail: "raw-byte diff + soldiff-ebpf-isa / optional sbpf|llvm-objdump",
   },
   {

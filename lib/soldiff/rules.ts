@@ -1,7 +1,8 @@
 import type { Finding, Severity } from "./types";
 import type { FetchedBytecode } from "./rpc";
 import { KNOWN_PROGRAM_IDS } from "./constants";
-import { extractPubkeys, extractStrings } from "./diff";
+import { extractPubkeys } from "./diff";
+import { analyzeRodata, type RodataAnalysis } from "./rodata";
 
 export interface RuleContext {
   oldBin: FetchedBytecode;
@@ -9,8 +10,7 @@ export interface RuleContext {
   changedChunks: number;
   oldPubkeys: Set<string>;
   newPubkeys: Set<string>;
-  oldStrings: Set<string>;
-  newStrings: Set<string>;
+  rodataAnalysis: RodataAnalysis;
 }
 
 export function runRules(ctx: RuleContext): Finding[] {
@@ -118,11 +118,12 @@ export function runRules(ctx: RuleContext): Finding[] {
     findings.push({
       id: nextId(),
       analyzer: "raw-byte",
-      severity: sizePct > 0.4 ? "HIGH" : "MEDIUM",
+      // Size delta alone is observational — never HIGH/CRITICAL by itself.
+      severity: "MEDIUM",
       confidence: "medium",
       code: "TEXT_SECTION_SIZE_CHANGE",
       instruction: "program",
-      description: `.text section size changed by ${sizeDelta > 0 ? "+" : ""}${sizeDelta} bytes (${(sizePct * 100).toFixed(1)}%).`,
+      description: `.text section size changed by ${sizeDelta > 0 ? "+" : ""}${sizeDelta} bytes (${(sizePct * 100).toFixed(1)}%). Size change is not proof of a vulnerability.`,
       recommendation: "Inspect added/removed bytecode regions in the raw and instruction diffs.",
       before: `${ctx.oldBin.textSection.length} bytes`,
       after: `${ctx.newBin.textSection.length} bytes`,
@@ -130,6 +131,7 @@ export function runRules(ctx: RuleContext): Finding[] {
         summary: ".text size change",
         before: ctx.oldBin.textSection.length,
         after: ctx.newBin.textSection.length,
+        details: { securityImplication: "none_proven" },
       },
     });
   }
@@ -163,66 +165,91 @@ export function runRules(ctx: RuleContext): Finding[] {
     });
   }
 
-  const newStrings = [...ctx.newStrings].filter((s) => !ctx.oldStrings.has(s) && s.length >= 6);
-  const removedStrings = [...ctx.oldStrings].filter(
-    (s) => !ctx.newStrings.has(s) && s.length >= 6
-  );
-
-  if (newStrings.length > 0) {
+  const ro = ctx.rodataAnalysis;
+  if (!ro.unchanged) {
     findings.push({
       id: nextId(),
       analyzer: "raw-byte",
-      severity: newStrings.length > 5 ? "MEDIUM" : "LOW",
-      confidence: "medium",
-      code: "NEW_RODATA_STRINGS",
+      severity: "INFO",
+      confidence: "high",
+      code: "RODATA_BYTES_CHANGED",
       instruction: "rodata",
-      description: `${newStrings.length} new string(s) in .rodata: ${newStrings
-        .slice(0, 3)
-        .map((s) => `"${s}"`)
-        .join(", ")}${newStrings.length > 3 ? "…" : ""}.`,
-      recommendation: "New strings may indicate new handlers or error paths — confirm manually.",
+      description:
+        `.rodata bytes changed (${ro.sizeA} → ${ro.sizeB}; ~${ro.changedRegionBytes} byte(s) in ` +
+        `${ro.regionChanges.length} changed region(s)). Byte changes do not prove product behavior changes.`,
+      recommendation:
+        "Treat byte-region diffs as primary evidence. Extracted strings are supplementary and often noisy.",
+      before: `${ro.sizeA} bytes`,
+      after: `${ro.sizeB} bytes`,
       evidence: {
-        summary: "new rodata strings",
-        after: newStrings.slice(0, 10),
+        summary: ".rodata byte regions changed",
+        details: {
+          changedRegionBytes: ro.changedRegionBytes,
+          regionCount: ro.regionChanges.length,
+          notes: ro.notes,
+        },
       },
     });
-  }
 
-  if (removedStrings.length > 0) {
-    findings.push({
-      id: nextId(),
-      analyzer: "raw-byte",
-      severity: "MEDIUM",
-      confidence: "medium",
-      code: "REMOVED_RODATA_STRINGS",
-      instruction: "rodata",
-      description: `${removedStrings.length} string(s) removed from .rodata, including: ${removedStrings
-        .slice(0, 2)
-        .map((s) => `"${s}"`)
-        .join(", ")}.`,
-      recommendation: "Removed strings may indicate deleted paths — confirm manually.",
-      before: removedStrings.slice(0, 2).join(", "),
-      evidence: {
-        summary: "removed rodata strings",
-        before: removedStrings.slice(0, 10),
-      },
-    });
+    const interesting = [
+      ...ro.addedProductLike.slice(0, 5),
+      ...ro.stringsInChangedRegionsB
+        .filter((s) => s.kind === "product" || s.kind === "anchor_constraint")
+        .slice(0, 5),
+    ];
+    const uncertain = ro.stringsInChangedRegionsB.filter(
+      (s) => s.kind === "uncertain_fragment" || s.kind === "build_path" || s.kind === "compiler_runtime"
+    ).length;
+
+    if (interesting.length > 0 || uncertain > 0) {
+      findings.push({
+        id: nextId(),
+        analyzer: "raw-byte",
+        severity: "LOW",
+        confidence: "low",
+        code: "RODATA_STRING_CONTEXT",
+        instruction: "rodata",
+        description:
+          `Supplementary .rodata string context near changed bytes: ` +
+          `${interesting.length} product/constraint-like sample(s)` +
+          (uncertain > 0
+            ? `; ${uncertain} build-path/runtime/fragment string(s) marked uncertain`
+            : "") +
+          `. Not proof of new or removed features.`,
+        recommendation:
+          "Do not equate string-set membership with functionality. Prefer byte-region evidence.",
+        evidence: {
+          summary: "supplementary rodata string context",
+          after: interesting.map((s) => ({
+            text: s.text.slice(0, 80),
+            kind: s.kind,
+            confidence: s.confidence,
+            offset: s.offset,
+          })),
+          details: {
+            proof: "none",
+            method: "offset-associated-string-extract",
+          },
+        },
+      });
+    }
   }
 
   if (!textUnchanged && ctx.changedChunks > 20) {
     findings.push({
       id: nextId(),
       analyzer: "raw-byte",
-      severity: ctx.changedChunks > 80 ? "HIGH" : "MEDIUM",
+      // Chunk churn is an observation of binary size/layout change — never HIGH/CRITICAL by itself.
+      severity: "MEDIUM",
       confidence: "medium",
       code: "LARGE_TEXT_REGION_CHANGED",
       instruction: "program",
-      description: `${ctx.changedChunks} aligned 32-byte chunks differ in .text. This measures raw region churn, not proven semantic logic changes.`,
+      description: `${ctx.changedChunks} aligned 32-byte chunks differ in .text. This measures raw region churn, not proven semantic logic changes or a vulnerability.`,
       recommendation:
-        "Use the SBF instruction-level diff for finer evidence. Do not equate chunk count with logic change.",
+        "Use the SBF instruction-level diff for finer evidence. Do not equate chunk count with malicious logic.",
       evidence: {
         summary: "large .text region churn",
-        details: { changedChunks: ctx.changedChunks },
+        details: { changedChunks: ctx.changedChunks, securityImplication: "none_proven" },
       },
     });
   }
@@ -247,11 +274,11 @@ export function buildRuleContext(
       ...extractPubkeys(newBin.textSection),
       ...extractPubkeys(newBin.rodataSection),
     ]),
-    oldStrings: new Set(extractStrings(oldBin.rodataSection)),
-    newStrings: new Set(extractStrings(newBin.rodataSection)),
+    rodataAnalysis: analyzeRodata(oldBin.rodataSection, newBin.rodataSection),
   };
 }
 
+/** Weighted observational finding score — not a vulnerability / CVSS score. */
 export function computeRiskScore(findings: Finding[]): number {
   const weights: Record<Severity, number> = {
     CRITICAL: 35,
@@ -262,6 +289,11 @@ export function computeRiskScore(findings: Finding[]): number {
   };
   const raw = findings.reduce((sum, f) => sum + weights[f.severity], 0);
   return Math.min(100, raw);
+}
+
+/** Public name for computeRiskScore. */
+export function computeObservedChangeScore(findings: Finding[]): number {
+  return computeRiskScore(findings);
 }
 
 export function summarizeFindings(findings: Finding[]) {
@@ -294,13 +326,8 @@ export function summarizeFindings(findings: Finding[]) {
         summary.info++;
         break;
     }
-    if (
-      f.code === "TEXT_BYTES_CHANGED" ||
-      f.code === "BYTECODE_CHANGED" ||
-      f.code === "LARGE_TEXT_REGION_CHANGED"
-    ) {
-      summary.instructionsChanged++;
-    }
+    // instructionsChanged is NOT a finding-code counter (that previously showed "3"
+    // and was misread as "3 SBF instructions"). Pipeline sets the real SBF delta total.
     if (f.code === "NEW_32_BYTE_PUBLIC_KEY_CANDIDATE") {
       summary.accountsAffected++;
     }
@@ -308,4 +335,15 @@ export function summarizeFindings(findings: Finding[]) {
   }
 
   return summary;
+}
+
+/** Apply real SBF instruction-level delta counts onto a findings summary. */
+export function applyInstructionDiffSummary(
+  summary: ReturnType<typeof summarizeFindings>,
+  diff: { added: number; removed: number; replaced: number }
+): ReturnType<typeof summarizeFindings> {
+  return {
+    ...summary,
+    instructionsChanged: diff.added + diff.removed + diff.replaced,
+  };
 }

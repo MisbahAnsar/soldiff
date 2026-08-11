@@ -10,8 +10,9 @@ import {
 import { reconstructElfFromBuffer } from "./buffer-reconstruct";
 import { countChangedChunks, diffBytecode } from "./diff";
 import {
+  applyInstructionDiffSummary,
   buildRuleContext,
-  computeRiskScore,
+  computeObservedChangeScore,
   runRules,
   summarizeFindings,
 } from "./rules";
@@ -291,11 +292,13 @@ async function buildAnalysisReport(params: {
   const disassemblyDiff = textUnchanged
     ? {
         analyzer: "sbf-instruction" as const,
+        methodology: "sequence-alignment" as const,
         available: true,
         added: 0,
         removed: 0,
         replaced: 0,
         unchanged: disasmA.normalized.length,
+        repositioned: 0,
         entries: [],
         functionRegionsChanged: 0,
       }
@@ -314,17 +317,24 @@ async function buildAnalysisReport(params: {
             : "INFO",
         confidence: "medium",
         description:
-          `SBF instruction-level diff: +${disassemblyDiff.added} / -${disassemblyDiff.removed} / ` +
-          `~${disassemblyDiff.replaced} replaced (offset-aligned). ` +
-          `${disassemblyDiff.functionRegionsChanged} changed region(s).`,
+          `SBF sequence-aligned instruction diff: +${disassemblyDiff.added} / -${disassemblyDiff.removed} / ` +
+          `${disassemblyDiff.replaced} replaced; ${disassemblyDiff.unchanged} unchanged` +
+          (disassemblyDiff.repositioned > 0
+            ? ` (${disassemblyDiff.repositioned} repositioned at different offsets)`
+            : "") +
+          `; ${disassemblyDiff.functionRegionsChanged} changed region(s). ` +
+          `Not a proof of semantic behavior change.`,
         recommendation:
-          "This is an instruction-level diff, not a semantic proof of behavior change.",
+          "This is an instruction-sequence observation, not a semantic proof of behavior change.",
         evidence: {
-          summary: "SBF instruction diff summary",
+          summary: "SBF sequence-aligned instruction diff summary",
           details: {
+            methodology: disassemblyDiff.methodology,
             added: disassemblyDiff.added,
             removed: disassemblyDiff.removed,
             replaced: disassemblyDiff.replaced,
+            unchanged: disassemblyDiff.unchanged,
+            repositioned: disassemblyDiff.repositioned,
             functionRegionsChanged: disassemblyDiff.functionRegionsChanged,
           },
         },
@@ -347,8 +357,11 @@ async function buildAnalysisReport(params: {
     ruleCtx.newPubkeys
   );
 
-  const summary = summarizeFindings(findings);
-  const riskScore = computeRiskScore(findings);
+  const summary = applyInstructionDiffSummary(
+    summarizeFindings(findings),
+    disassemblyDiff
+  );
+  const riskScore = computeObservedChangeScore(findings);
 
   const versionA = toVersionArtifact("A", oldBin, framework, idlA, disasmA);
   const versionB = toVersionArtifact("B", newBin, framework, idlB, disasmB);
@@ -397,6 +410,7 @@ async function buildAnalysisReport(params: {
     },
     findings,
     riskScore,
+    observedChangeScore: riskScore,
     summary,
     limitations,
     instructionDiff: textDiff,

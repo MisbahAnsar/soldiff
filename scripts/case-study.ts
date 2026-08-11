@@ -102,7 +102,7 @@ async function main(): Promise<void> {
   console.info(`[case-study] A sha256=${report.versionA.provenance.sha256}`);
   console.info(`[case-study] B sha256=${report.versionB.provenance.sha256}`);
   console.info(
-    `[case-study] findings=${report.findings.length} risk=${report.riskScore}`
+    `[case-study] findings=${report.findings.length} observedChangeScore=${report.observedChangeScore}`
   );
 }
 

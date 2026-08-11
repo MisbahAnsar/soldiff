@@ -188,12 +188,18 @@ export type InstructionDiffEntry = {
 
 export type DisassemblyDiffResult = {
   analyzer: "sbf-instruction";
+  /** sequence-alignment matches identical insn fingerprints; not offset identity */
+  methodology: "sequence-alignment" | "offset-aligned-legacy";
   available: boolean;
   reason?: string;
   added: number;
   removed: number;
+  /** Adjacent delete+insert pairs after alignment (operand/opcode differ). */
   replaced: number;
+  /** Matched identical fingerprints (may sit at different byte offsets). */
   unchanged: number;
+  /** Subset of unchanged where byte offset differs (shifted/repositioned). */
+  repositioned: number;
   entries: InstructionDiffEntry[];
   functionRegionsChanged: number;
 };
@@ -231,7 +237,13 @@ export type AnalysisReport = {
     anchorIdlDiff: IdlDiffResult;
   };
   findings: Finding[];
+  /**
+   * Weighted observational finding score (not a vulnerability score).
+   * Prefer `observedChangeScore` in user-facing copy.
+   */
   riskScore: number;
+  /** Alias of riskScore — observational change magnitude, not CVSS/vuln risk. */
+  observedChangeScore: number;
   summary: {
     critical: number;
     high: number;

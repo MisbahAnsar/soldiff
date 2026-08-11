@@ -13,7 +13,13 @@ import {
 import { sha256Hex } from "../hash";
 import { buildMinimalElf } from "../test-elf";
 import { validateElf } from "../elf";
-import { runRules, buildRuleContext } from "../rules";
+import {
+  applyInstructionDiffSummary,
+  buildRuleContext,
+  computeRiskScore,
+  runRules,
+  summarizeFindings,
+} from "../rules";
 import type { OrderedWriteChunk } from "../types";
 import type { FetchedBytecode } from "../rpc";
 import {
@@ -30,6 +36,7 @@ import {
 } from "../disassemble";
 import { renderMarkdownReport, buildCaseStudyManifest } from "../report-markdown";
 import type { AnalysisReport } from "../types";
+import { analyzeRodata, classifyRodataString } from "../rodata";
 
 function chunk(
   partial: Partial<OrderedWriteChunk> & { offset: number; bytes: Buffer; signature: string; slot: number }
@@ -306,6 +313,101 @@ describe("rules honesty", () => {
     expect(findings.some((f) => f.code === "LOGIC_CHANGE")).toBe(false);
     expect(findings.some((f) => f.code === "LARGE_TEXT_REGION_CHANGED")).toBe(true);
   });
+
+  test("LARGE_TEXT_REGION_CHANGED is never HIGH from chunk count alone", () => {
+    const textA = Buffer.alloc(64, 1);
+    const textB = Buffer.alloc(64, 2);
+    const oldBin = bin({ textSection: textA, rodataSection: Buffer.alloc(0), slot: 1 });
+    const newBin = bin({ textSection: textB, rodataSection: Buffer.alloc(0), slot: 2 });
+    const findings = runRules(buildRuleContext(oldBin, newBin, 11016));
+    const large = findings.find((f) => f.code === "LARGE_TEXT_REGION_CHANGED");
+    expect(large).toBeDefined();
+    expect(large!.severity).toBe("MEDIUM");
+    expect(large!.severity).not.toBe("HIGH");
+  });
+
+  test("summarizeFindings does not treat bytecode findings as SBF instruction count", () => {
+    const findings = [
+      {
+        id: "1",
+        analyzer: "raw-byte",
+        code: "TEXT_BYTES_CHANGED",
+        severity: "INFO" as const,
+        confidence: "high" as const,
+        description: "x",
+        evidence: { summary: "x" },
+      },
+      {
+        id: "2",
+        analyzer: "raw-byte",
+        code: "BYTECODE_CHANGED",
+        severity: "INFO" as const,
+        confidence: "high" as const,
+        description: "x",
+        evidence: { summary: "x" },
+      },
+      {
+        id: "3",
+        analyzer: "raw-byte",
+        code: "LARGE_TEXT_REGION_CHANGED",
+        severity: "MEDIUM" as const,
+        confidence: "medium" as const,
+        description: "x",
+        evidence: { summary: "x" },
+      },
+    ];
+    const summary = summarizeFindings(findings);
+    expect(summary.instructionsChanged).toBe(0);
+    const withSbf = applyInstructionDiffSummary(summary, {
+      added: 3946,
+      removed: 1320,
+      replaced: 38444,
+    });
+    expect(withSbf.instructionsChanged).toBe(3946 + 1320 + 38444);
+  });
+
+  test("risk score is not inflated by HIGH for text-chunk churn alone", () => {
+    const textA = Buffer.alloc(64, 1);
+    const textB = Buffer.alloc(64, 2);
+    const oldBin = bin({ textSection: textA, rodataSection: Buffer.alloc(0), slot: 1 });
+    const newBin = bin({ textSection: textB, rodataSection: Buffer.alloc(0), slot: 2 });
+    const findings = runRules(buildRuleContext(oldBin, newBin, 11016));
+    expect(findings.every((f) => f.severity !== "HIGH" && f.severity !== "CRITICAL")).toBe(
+      true
+    );
+    const score = computeRiskScore(findings);
+    // TEXT_BYTES + BYTECODE (1+1) + LARGE_TEXT MEDIUM (10) = 12 when no strings/pubkeys
+    expect(score).toBeLessThan(20);
+  });
+
+  test("TEXT_SECTION_SIZE_CHANGE is never HIGH from size delta alone", () => {
+    const textA = Buffer.alloc(100, 1);
+    const textB = Buffer.alloc(200, 2);
+    const oldBin = bin({ textSection: textA, rodataSection: Buffer.alloc(0), slot: 1 });
+    const newBin = bin({ textSection: textB, rodataSection: Buffer.alloc(0), slot: 2 });
+    const findings = runRules(buildRuleContext(oldBin, newBin, 10));
+    const sizeF = findings.find((f) => f.code === "TEXT_SECTION_SIZE_CHANGE");
+    expect(sizeF).toBeDefined();
+    expect(sizeF!.severity).toBe("MEDIUM");
+  });
+
+  test("rodata findings prioritize bytes over noisy string-set adds", () => {
+    const text = Buffer.alloc(32, 1);
+    const oldBin = bin({
+      textSection: text,
+      rodataSection: Buffer.from("hello\0/Users/dmitri/work/platform-tools/x\0"),
+      slot: 1,
+    });
+    const newBin = bin({
+      textSection: text,
+      rodataSection: Buffer.from("hello\0/home/runner/work/platform-tools/x\0world\0"),
+      slot: 2,
+    });
+    const findings = runRules(buildRuleContext(oldBin, newBin, 0));
+    expect(findings.some((f) => f.code === "RODATA_BYTES_CHANGED")).toBe(true);
+    expect(findings.some((f) => f.code === "NEW_RODATA_STRINGS")).toBe(false);
+    expect(findings.some((f) => f.code === "REMOVED_RODATA_STRINGS")).toBe(false);
+  });
 });
 
 describe("anchor IDL", () => {
@@ -408,9 +510,12 @@ describe("disassembly", () => {
   test("identical versions", () => {
     const a = normalizeInstructions(decodeSbfInstructions(movExit));
     const diff = diffNormalizedInstructions(a, a);
+    expect(diff.methodology).toBe("sequence-alignment");
     expect(diff.added).toBe(0);
     expect(diff.removed).toBe(0);
     expect(diff.replaced).toBe(0);
+    expect(diff.unchanged).toBe(2);
+    expect(diff.repositioned).toBe(0);
   });
 
   test("added / removed / changed instruction", () => {
@@ -425,6 +530,7 @@ describe("disassembly", () => {
       normalizeInstructions(b)
     );
     expect(diff.added).toBe(1);
+    expect(diff.unchanged).toBe(2);
 
     const removed = diffNormalizedInstructions(
       normalizeInstructions(b),
@@ -441,12 +547,85 @@ describe("disassembly", () => {
       normalizeInstructions(decodeSbfInstructions(changedImm))
     );
     expect(ch.replaced).toBe(1);
+    expect(ch.unchanged).toBe(1);
+  });
+
+  test("insertion does not mark later identical instructions as replaced", () => {
+    // A: mov r0,1 ; exit ; mov r1,2 ; exit
+    // B: mov r0,1 ; exit ; mov r2,3 ; mov r1,2 ; exit   (insert before trailing pair)
+    const insn = (bytes: number[]) => Buffer.from(bytes);
+    const mov0 = insn([0xb7, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]);
+    const exit = insn([0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    const mov1 = insn([0xb7, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]);
+    const mov2 = insn([0xb7, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00]);
+    const aBuf = Buffer.concat([mov0, exit, mov1, exit]);
+    const bBuf = Buffer.concat([mov0, exit, mov2, mov1, exit]);
+    const diff = diffNormalizedInstructions(
+      normalizeInstructions(decodeSbfInstructions(aBuf)),
+      normalizeInstructions(decodeSbfInstructions(bBuf))
+    );
+    expect(diff.added).toBe(1);
+    expect(diff.removed).toBe(0);
+    expect(diff.replaced).toBe(0);
+    expect(diff.unchanged).toBe(4);
+    expect(diff.repositioned).toBeGreaterThan(0);
   });
 
   test("normalization consistency", () => {
     const d1 = disassembleTextSection(movExit);
     const d2 = disassembleTextSection(movExit);
     expect(d1.normalized).toEqual(d2.normalized);
+  });
+});
+
+describe("rodata analysis", () => {
+  test("classifies build paths and fragmented concatenations as non-product", () => {
+    expect(classifyRodataString("/Users/dmitri/work/platform-tools/out/x").kind).toBe(
+      "build_path"
+    );
+    expect(classifyRodataString("memory allocation failed, out of memory").kind).toBe(
+      "compiler_runtime"
+    );
+    const frag =
+      "A signer constraint was violatedAn owner constraint was violatedProgramError caused by account:";
+    expect(classifyRodataString(frag).kind).toBe("uncertain_fragment");
+
+    const a = Buffer.from("ok\0/Users/dmitri/platform-tools/a\0");
+    const b = Buffer.from("ok\0/home/runner/work/platform-tools/a\0");
+    const analysis = analyzeRodata(a, b);
+    expect(analysis.unchanged).toBe(false);
+    expect(analysis.changedRegionBytes).toBeGreaterThan(0);
+    expect(analysis.notes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("ELF section-header truncation", () => {
+  test("trailing sh_table overrun is a warning when loadable sections fit", () => {
+    // Minimal ELF with e_shoff/e_shnum claiming 4 bytes past EOF; keep sh_offset/sh_size readable.
+    const elf = Buffer.alloc(252); // claimed sh_end = 128+2*64 = 256 → overrun 4
+    elf[0] = 0x7f;
+    elf[1] = 0x45;
+    elf[2] = 0x4c;
+    elf[3] = 0x46;
+    elf[4] = 2; // ELF64
+    elf[5] = 1; // LE
+    elf.writeUInt16LE(3, 16); // ET_DYN
+    elf.writeUInt16LE(247, 18); // EM_BPF
+    elf.writeUInt16LE(64, 52); // ehsize
+    elf.writeBigUInt64LE(BigInt(128), 40); // shoff
+    elf.writeUInt16LE(64, 58); // shentsize
+    elf.writeUInt16LE(2, 60); // shnum
+    elf.writeUInt16LE(1, 62); // shstrndx
+    const sh1 = 128 + 64;
+    elf.writeUInt32LE(1, sh1);
+    elf.writeUInt32LE(1, sh1 + 4); // SHT_PROGBITS
+    elf.writeBigUInt64LE(BigInt(64), sh1 + 24);
+    elf.writeBigUInt64LE(BigInt(16), sh1 + 32);
+    const v = validateElf(elf);
+    expect(v.warnings.some((w) => /Section-header table metadata extends/.test(w))).toBe(
+      true
+    );
+    expect(v.errors.some((e) => /Section header table exceeds/.test(e))).toBe(false);
   });
 });
 
@@ -531,11 +710,13 @@ describe("report", () => {
         },
         disassemblyDiff: {
           analyzer: "sbf-instruction" as const,
+          methodology: "sequence-alignment" as const,
           available: true,
           added: 0,
           removed: 0,
           replaced: 0,
           unchanged: 0,
+          repositioned: 0,
           entries: [],
           functionRegionsChanged: 0,
         },
@@ -558,6 +739,7 @@ describe("report", () => {
         },
       ],
       riskScore: 1,
+      observedChangeScore: 1,
       summary: {
         critical: 0,
         high: 0,

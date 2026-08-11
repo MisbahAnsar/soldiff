@@ -28,7 +28,7 @@ const SECTIONS = [
   { id: "findings", label: "Findings" },
   { id: "sections", label: "Sections" },
   { id: "bytecode", label: "Bytecode" },
-  { id: "blast", label: "Blast radius" },
+  { id: "blast", label: "Blast (synthetic)" },
   { id: "reconstruction", label: "Reconstruction" },
   { id: "versions", label: "Versions" },
 ] as const;
@@ -136,7 +136,7 @@ export default function AuditReport({ report, context }: Props) {
               <div className="audit-panel-block">
                 <div className="audit-panel-eyebrow">SolDiff Upgrade Report</div>
                 <div className="audit-summary-grid">
-                  <SummaryStat label="Overall risk" value={`${report.riskScore}/100`} accent={riskColor} />
+                  <SummaryStat label="Observed change" value={`${report.riskScore}/100`} accent={riskColor} />
                   <SummaryStat label="Findings" value={String(totalFindings)} />
                   <SummaryStat label="Analysis time" value={elapsed} />
                   <SummaryStat
@@ -164,12 +164,18 @@ export default function AuditReport({ report, context }: Props) {
               <div className="audit-panel-block">
                 <StatGrid
                   items={[
-                    { label: "Risk score", value: `${report.riskScore}/100` },
+                    { label: "Observed change score", value: `${report.riskScore}/100` },
                     { label: "Critical", value: String(report.summary.critical) },
                     { label: "High", value: String(report.summary.high) },
                     { label: "Medium", value: String(report.summary.medium) },
-                    { label: "New CPI targets", value: String(report.summary.newCpiTargets) },
-                    { label: "Instructions changed", value: String(report.summary.instructionsChanged) },
+                    {
+                      label: "Proven new CPI targets",
+                      value: String(report.summary.newCpiTargets),
+                    },
+                    {
+                      label: "SBF insn deltas (A/R/R)",
+                      value: String(report.summary.instructionsChanged),
+                    },
                   ]}
                 />
               </div>
@@ -245,6 +251,11 @@ export default function AuditReport({ report, context }: Props) {
 
           {activeSection === "blast" && (
             <div className="audit-panel-scroll audit-panel-blast">
+              <p className="audit-muted compact" style={{ marginBottom: 12 }}>
+                Synthetic blast-radius visualization — not an on-chain dependency graph.
+                Nodes are inferred from sampled byte patterns and report structure, not proven
+                CPI / PDA edges.
+              </p>
               <BlastRadius nodes={report.blastNodes} edges={report.blastEdges} compact />
             </div>
           )}
@@ -329,14 +340,14 @@ export default function AuditReport({ report, context }: Props) {
         <div className="audit-playground-footer">
           <div className="audit-playground-footer-stats">
             <span>
-              Instructions changed{" "}
+              SBF insn deltas{" "}
               <strong>{report.summary.instructionsChanged}</strong>
             </span>
             <span>
               Pubkey candidates <strong>{report.summary.accountsAffected}</strong>
             </span>
             <span>
-              Blast nodes changed{" "}
+              Synthetic blast nodes{" "}
               <strong>{report.blastNodes.filter((n) => n.changed).length}</strong>
             </span>
           </div>

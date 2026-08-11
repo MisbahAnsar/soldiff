@@ -42,8 +42,10 @@ const FINDING_PRESENTATION: Record<string, FindingPresentation> = {
     title: "New 32-byte Public Key Candidate",
   },
   NEW_EXTERNAL_PROGRAM: { icon: "⚠️", title: "New External Program (legacy demo)" },
-  NEW_RODATA_STRINGS: { icon: "🟡", title: "New Read-Only Data" },
-  REMOVED_RODATA_STRINGS: { icon: "🟡", title: "Removed Read-Only Data" },
+  NEW_RODATA_STRINGS: { icon: "🟡", title: "New Read-Only Data (legacy)" },
+  REMOVED_RODATA_STRINGS: { icon: "🟡", title: "Removed Read-Only Data (legacy)" },
+  RODATA_BYTES_CHANGED: { icon: "🟡", title: ".rodata Bytes Changed" },
+  RODATA_STRING_CONTEXT: { icon: "•", title: ".rodata String Context (supplementary)" },
   LARGE_TEXT_REGION_CHANGED: { icon: "🔵", title: "Large .text Region Changed" },
   LOGIC_CHANGE: { icon: "🔵", title: "Logic Change (legacy demo)" },
   SBF_INSTRUCTION_DIFF: { icon: "🔵", title: "SBF Instruction Diff" },
@@ -75,10 +77,11 @@ export function getRiskLevel(score: number): {
   tone: "safe" | "review" | "critical";
   emoji: string;
 } {
-  if (score >= 80) return { label: "Critical", tone: "critical", emoji: "🔴" };
-  if (score >= 50) return { label: "High", tone: "critical", emoji: "🔴" };
-  if (score >= 25) return { label: "Medium", tone: "review", emoji: "🟡" };
-  return { label: "Low", tone: "safe", emoji: "🟢" };
+  // Labels describe observed-change magnitude, not vulnerability severity.
+  if (score >= 80) return { label: "Large change", tone: "critical", emoji: "🔴" };
+  if (score >= 50) return { label: "Notable change", tone: "critical", emoji: "🔴" };
+  if (score >= 25) return { label: "Moderate change", tone: "review", emoji: "🟡" };
+  return { label: "Small change", tone: "safe", emoji: "🟢" };
 }
 
 export function getRiskBanner(score: number, findings: Finding[]): {
@@ -103,11 +106,11 @@ export function getRiskBanner(score: number, findings: Finding[]): {
   if (score >= 80 || critical > 0) {
     return {
       tone: "critical",
-      title: "Critical review required",
+      title: "Large observed change — review required",
       reason:
         critical > 0
-          ? `${critical} critical finding(s) detected. Do not approve this upgrade without a full security review.`
-          : "Risk score is elevated. Treat this upgrade as security-sensitive until reviewed.",
+          ? `${critical} critical finding(s) with strong evidence. Review before trusting this upgrade.`
+          : "Observed change score is elevated from binary findings. This is not a proven vulnerability score.",
     };
   }
   if (score >= 25 || high > 0) {
@@ -117,14 +120,14 @@ export function getRiskBanner(score: number, findings: Finding[]): {
       reason:
         high > 0
           ? `${high} high-severity finding(s) warrant manual verification before deployment.`
-          : "Bytecode or dependency changes were detected. Confirm they match the intended release.",
+          : "Bytecode or data changes were observed. Confirm they match the intended release. Score is observational, not a vuln rating.",
     };
   }
   return {
     tone: "safe",
-    title: "No significant risk signals",
+    title: "Limited observed change signals",
     reason:
-      "No critical or high-severity patterns detected. Standard review is still recommended for production upgrades.",
+      "No critical or high-severity evidence-backed findings. Standard review is still recommended for production upgrades.",
   };
 }
 
@@ -196,7 +199,9 @@ export function executiveBullets(report: DemoProgram): string[] {
   bullets.push(
     `✓ Pubkey candidates flagged: ${report.summary.accountsAffected} (not proven CPI targets)`
   );
-  bullets.push(`✓ Blast radius (synthetic): ${report.blastNodes.filter((n) => n.changed).length}`);
+  bullets.push(
+    `✓ Synthetic blast-radius nodes flagged: ${report.blastNodes.filter((n) => n.changed).length} (not on-chain deps)`
+  );
 
   return bullets;
 }
